@@ -14,6 +14,10 @@ except Exception:
     pass
 
 
+class NeedLogin(Exception):
+    """Instagram refused anonymous access (private post or login wall)."""
+
+
 def safe(name):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(name)).strip(" .")
     return name[:120] or "unknown"
@@ -71,8 +75,7 @@ def download_instagram(url, root, cookies_file, log):
             g["files"].append(media)
 
         if not groups:
-            raise RuntimeError("Nothing downloaded. Instagram needs login: put cookies.txt in the "
-                               "SocialDownloader folder (see README).")
+            raise NeedLogin("Nothing downloaded (private post or login required).")
 
         last = None
         for (user, code), g in groups.items():
@@ -83,8 +86,6 @@ def download_instagram(url, root, cookies_file, log):
                 if os.path.exists(target):
                     os.remove(target)
                 shutil.move(os.path.join(tmp, media), target)
-            with open(os.path.join(dest, "caption.txt"), "w", encoding="utf-8") as f:
-                f.write(g["caption"])
             log("Saved: " + dest)
             last = dest
         return last
@@ -141,8 +142,6 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
     with yt_dlp.YoutubeDL(opts) as y:
         y.download([url])
 
-    with open(os.path.join(dest, "caption.txt"), "w", encoding="utf-8") as f:
-        f.write(info.get("description") or "")
     log("Saved: " + dest)
     return dest
 
