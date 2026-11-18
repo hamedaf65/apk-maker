@@ -402,16 +402,14 @@ class Root(BoxLayout):
         if not urls:
             self.log(fa("لینکی پیدا نشد."))
             return
-        root = BASE
+        # Store files in app-private storage. Android 10+ scoped storage blocks
+        # arbitrary direct writes to /storage/emulated/0/Download for modern target SDKs.
+        root = os.path.join(self.user_dir, "downloads")
         try:
             os.makedirs(root, exist_ok=True)
-            test = os.path.join(root, ".w")
-            open(test, "w").close()
-            os.remove(test)
-        except Exception:
-            root = os.path.join(self.user_dir, "downloads")
-            os.makedirs(root, exist_ok=True)
-            self.log(fa("اجازه ذخیره در Download داده نشد. محل ذخیره:") + " " + root)
+        except Exception as exc:
+            self.log("Could not create app download folder: " + repr(exc))
+            return
         self.busy = True
         self.btn.disabled = True
         self.download_root = root
