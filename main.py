@@ -44,7 +44,6 @@ def fa(text):
 
 
 if platform == "android":
-    from android.permissions import Permission, request_permissions
     from android.runnable import run_on_ui_thread
     from jnius import autoclass
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
@@ -208,7 +207,7 @@ class Root(BoxLayout):
         self.user_dir = user_dir
         self.cookies_path = os.path.join(user_dir, "ig_cookies.txt")
         self.log_path = os.path.join(user_dir, "downloader-internal.log")
-        self.download_root = BASE
+        self.download_root = os.path.join(user_dir, "downloads")
         self.busy = False
         self.wv = None
         self.status_popup = None
@@ -625,7 +624,6 @@ class SocialDownloaderApp(App):
 
     def on_start(self):
         if platform == "android":
-            request_permissions([Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE])
             try:
                 from android import activity
                 activity.bind(on_new_intent=self.handle_intent)
