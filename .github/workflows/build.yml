@@ -39,6 +39,9 @@ jobs:
             .buildozer
           key: buildozer-${{ hashFiles('buildozer.spec') }}
 
+      - name: Validate Python syntax
+        run: python -m py_compile main.py core.py
+
       - name: Build APK
         run: yes | buildozer -v android debug > build.log 2>&1
 
