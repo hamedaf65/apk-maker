@@ -165,6 +165,28 @@ class SoftCard(BoxLayout):
         self._border.rounded_rectangle = (self.x, self.y, self.width, self.height, self.corner_radius)
 
 
+class LightPopup(Popup):
+    """A light, rounded popup surface independent of the Android dark theme."""
+    def __init__(self, **kwargs):
+        kwargs.setdefault("background", "")
+        kwargs.setdefault("background_color", (0, 0, 0, 0))
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(0.99, 0.98, 1, 1)
+            self._light_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
+            Color(0.79, 0.72, 0.95, 0.75)
+            self._light_border = Line(
+                rounded_rectangle=(self.x, self.y, self.width, self.height, dp(24)),
+                width=1.0)
+        self.bind(pos=self._sync_light_bg, size=self._sync_light_bg)
+
+    def _sync_light_bg(self, *_):
+        self._light_bg.pos = self.pos
+        self._light_bg.size = self.size
+        self._light_border.rounded_rectangle = (
+            self.x, self.y, self.width, self.height, dp(24))
+
+
 class PlatformTile(BoxLayout):
     def __init__(self, symbol, name, fill, **kwargs):
         super().__init__(orientation="vertical", spacing=dp(2),
@@ -522,7 +544,7 @@ class Root(BoxLayout):
         panel.add_widget(self.status_title)
         panel.add_widget(self.status_detail)
         panel.add_widget(self.status_close_btn)
-        self.status_popup = Popup(
+        self.status_popup = LightPopup(
             title="", content=panel, size_hint=(0.88, None), height=dp(350),
             auto_dismiss=False, separator_height=0,
             background="", background_color=(0.99, 0.98, 1, 1))
@@ -616,8 +638,8 @@ class Root(BoxLayout):
                                color=(0.35, 0.33, 0.48, 1)))
         close = button("Close", size_hint_y=None, height=dp(46))
         panel.add_widget(close)
-        popup = Popup(title="", content=panel, size_hint=(0.88, None),
-                      height=dp(235), background="", background_color=(1, 1, 1, 1))
+        popup = LightPopup(title="", content=panel, size_hint=(0.88, None),
+                           height=dp(235))
         close.bind(on_release=popup.dismiss)
         popup.open()
 
