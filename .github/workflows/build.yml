@@ -6,45 +6,35 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
-
+          python-version: "3.12"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev \
-            build-essential ccache
-
-      - name: Install buildozer
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential ccache
+      - name: Install Buildozer and Cython
         run: |
           python -m pip install --upgrade pip
-          pip install buildozer==1.5.0 cython==0.29.36 virtualenv
-
-      - name: Cache buildozer data
+          pip install buildozer==1.6.0 cython==0.29.36 virtualenv
+      - name: Cache Buildozer data
         uses: actions/cache@v4
         with:
           path: |
             ~/.buildozer
             .buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
-
+          key: clipdrop-api36-${{ hashFiles('buildozer.spec') }}
       - name: Validate Python syntax
         run: python -m py_compile main.py core.py
-
       - name: Build APK
         run: yes | buildozer -v android debug > build.log 2>&1
-
       - name: Show error summary (only if build failed)
         if: failure()
         run: |
@@ -52,18 +42,16 @@ jobs:
           grep -m1 -A 25 "FAILURE: Build failed" build.log || true
           echo "===== JAVA ====="
           java -version 2>&1; echo "JAVA_HOME=$JAVA_HOME"
-          echo "===== LAST 15 LINES ====="
-          tail -n 15 build.log
-
+          echo "===== LAST 40 LINES ====="
+          tail -n 40 build.log
       - name: Save full log (only if build failed)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: clipdrop-build-log
           path: build.log
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ClipDrop-apk
+          name: ClipDrop-Android-APK
           path: bin/*.apk
