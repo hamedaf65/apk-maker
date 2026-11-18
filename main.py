@@ -8,7 +8,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.app import App
 from kivy.animation import Animation
-from kivy.graphics import Color, Line, RoundedRectangle, Triangle
+from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Triangle
 from kivy.metrics import dp
 from kivy.properties import NumericProperty, StringProperty
 from kivy.uix.popup import Popup
