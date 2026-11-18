@@ -1,18 +1,19 @@
 [app]
-title = ClipDrop
+title = SociaSave
 package.name = socialdownloader
 package.domain = org.hamedafshari
 source.dir = .
 source.include_exts = py,ttf,xml
-version = 1.3
-requirements = python3,kivy==2.3.2,yt-dlp==2026.10.26,gallery-dl==1.32.20,ffmpeg,av_codecs,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
+version = 1.4
+requirements = python3,kivy==2.3.2,yt-dlp==2026.10.26,yt-dlp-ejs,gallery-dl==1.32.20,ffmpeg,av_codecs,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET
 android.manifest.intent_filters = intent_filters.xml
 android.manifest.launch_mode = singleTask
+android.add_src = android_src
 android.api = 36
-android.minapi = 24
+android.minapi = 29
 android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
 android.ndk = 28c
