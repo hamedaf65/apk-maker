@@ -113,6 +113,15 @@ def _caption(metadata):
 
 
 def _account_id(metadata):
+    # Prefer a stable numeric/platform account ID; use the handle only as fallback.
+    if isinstance(metadata, dict):
+        for parent_key in ("owner", "user", "author", "uploader", "channel"):
+            parent = metadata.get(parent_key)
+            if isinstance(parent, dict):
+                for key in ("id", "id_str", "pk", "user_id", "username", "screen_name", "name"):
+                    value = parent.get(key)
+                    if value not in (None, ""):
+                        return safe(str(value).lstrip("@"))
     account = _deep_value(metadata, (
         "owner_id", "user_id", "author_id", "uploader_id", "channel_id",
         "screen_name", "username", "user_name", "account_id",
