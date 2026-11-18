@@ -55,6 +55,38 @@ jobs:
           java -version
       - name: Validate Python syntax
         run: python -m py_compile main.py core.py
+      - name: Test platform routing and archive metadata
+        run: |
+          python - <<'PY'
+          import os
+          import tempfile
+          import core
+
+          cases = {
+              "https://www.instagram.com/p/abc123/": "instagram",
+              "https://youtu.be/abc123": "youtube",
+              "https://x.com/example/status/123456": "twitter",
+              "https://www.facebook.com/watch/?v=123": "facebook",
+              "https://fb.watch/abc123/": "facebook",
+          }
+          for url, expected in cases.items():
+              actual = core.detect_platform(url)
+              assert actual == expected, (url, expected, actual)
+
+          account = core._account_id({"owner": {"id": "998877", "username": "sample"}})
+          assert account == "998877", account
+          post = core._post_id({"shortcode": "POST123"}, "https://www.instagram.com/p/POST123/")
+          assert post == "POST123", post
+
+          with tempfile.TemporaryDirectory() as temporary:
+              folder = os.path.join(temporary, "instagram", account, post)
+              core._write_post_text(folder, "Example caption", "https://www.instagram.com/p/POST123/")
+              with open(os.path.join(folder, "caption.txt"), encoding="utf-8") as handle:
+                  assert handle.read().strip() == "Example caption"
+              with open(os.path.join(folder, "source.txt"), encoding="utf-8") as handle:
+                  assert "POST123" in handle.read()
+          print("SociaSave routing and archive metadata tests passed.")
+          PY
       - name: Validate custom Android Java helper
         run: |
           test -f android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
