@@ -34,7 +34,7 @@ def safe(name):
 
 
 def extract_urls(text):
-    urls = re.findall(r"https?://[^\s<>""']+", text or "")
+    urls = re.findall(r"https?://[^\s<>\"']+", text or "")
     return [url.rstrip(".,;!?)]}>") for url in urls]
 
 
