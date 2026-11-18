@@ -8,51 +8,83 @@ on:
     branches: [main, master, feature/clipdrop-ui-and-download-flow]
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install system packages
+
+      - name: Install Android build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev build-essential ccache
-      - name: Install Buildozer and Cython
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip python3-virtualenv \
+            autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libtinfo6 cmake libffi-dev libssl-dev automake autopoint gettext ccache
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" default stable
+
+      - name: Install Buildozer for Python 3.14
         run: |
           python -m pip install --upgrade pip
-          pip install buildozer==1.6.0 cython==0.29.36 virtualenv
+          pip install "git+https://github.com/kivy/buildozer.git@76bac28545c66bbcc671d49aca553a747d69608e"
+          pip install legacy-cgi setuptools cython==0.29.34 virtualenv
+
       - name: Cache Buildozer data
         uses: actions/cache@v4
         with:
           path: |
             ~/.buildozer
             .buildozer
-          key: clipdrop-api36-${{ hashFiles('buildozer.spec') }}
+          key: clipdrop-p4a-develop-${{ hashFiles('buildozer.spec') }}
+
+      - name: Remove stale p4a temporary environments
+        run: |
+          if [ -d .buildozer ]; then
+            find .buildozer -type d -path '*/build/venv' -prune -exec rm -rf {} +
+          fi
+
+      - name: Show build tool versions
+        run: |
+          python --version
+          buildozer --version
+          rustc --version
+          java -version
+
       - name: Validate Python syntax
         run: python -m py_compile main.py core.py
+
       - name: Build APK
         run: yes | buildozer -v android debug > build.log 2>&1
+
       - name: Show error summary (only if build failed)
         if: failure()
         run: |
-          echo "===== GRADLE FAILURE DETAILS ====="
-          grep -m1 -A 25 "FAILURE: Build failed" build.log || true
+          echo "===== BUILD ERRORS ====="
+          grep -nEi "ImportError:|ERROR:|error:|Exception:|failed|Could not|No such file" build.log | tail -n 80 || true
+          echo "===== LAST 60 LINES ====="
+          tail -n 60 build.log
           echo "===== JAVA ====="
-          java -version 2>&1; echo "JAVA_HOME=$JAVA_HOME"
-          echo "===== LAST 40 LINES ====="
-          tail -n 40 build.log
+          java -version 2>&1
+
       - name: Save full log (only if build failed)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: clipdrop-build-log
           path: build.log
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

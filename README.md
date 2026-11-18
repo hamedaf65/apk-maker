@@ -21,14 +21,18 @@ Downloads and the internal diagnostic log are kept in ClipDrop's app-private sto
 
 - Android target API: 36
 - Minimum Android API: 24
-- python-for-android: v2026.05.09
-- Buildozer: 1.6.0
+- Android architectures: arm64-v8a and armeabi-v7a
+- python-for-android: develop, pinned to commit 9562d1b4f306d0af1e76991c711114010dea4152
+- Buildozer: pinned to commit 76bac28545c66bbcc671d49aca553a747d69608e
+- Build host Python: 3.14
 - Kivy: 2.3.2
 - yt-dlp: 2026.10.26
 - gallery-dl: 1.32.20
-- FFmpeg: bundled through the python-for-android recipe
+- FFmpeg: bundled through the python-for-android recipe with av_codecs enabled
 
-GitHub Actions builds a debug APK and uploads it as the ClipDrop-Android-APK artifact.
+GitHub Actions validates Python syntax, builds a debug APK, and uploads it as the ClipDrop-Android-APK artifact.
+
+The Android build uses the maintained python-for-android develop pipeline instead of the older 2026.05.09 tag, whose multi-architecture temporary pip environment was susceptible to mixed package files.
 
 ## Important
 

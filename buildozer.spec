@@ -11,13 +11,13 @@ fullscreen = 0
 android.permissions = INTERNET
 android.manifest.intent_filters = intent_filters.xml
 android.manifest.launch_mode = singleTask
-# Android 16 target API; modern python-for-android toolchain.
 android.api = 36
 android.minapi = 24
 android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
 android.ndk = 28c
-p4a.branch = v2026.05.09
+p4a.branch = develop
+p4a.commit = 9562d1b4f306d0af1e76991c711114010dea4152
 
 [buildozer]
 log_level = 2
