@@ -8,7 +8,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.app import App
 from kivy.animation import Animation
-from kivy.graphics import Color, Line, RoundedRectangle
+from kivy.graphics import Color, Line, RoundedRectangle, Triangle
 from kivy.metrics import dp
 from kivy.properties import NumericProperty, StringProperty
 from kivy.uix.popup import Popup
@@ -164,6 +164,56 @@ class SoftCard(BoxLayout):
         self._border.rounded_rectangle = (self.x, self.y, self.width, self.height, self.corner_radius)
 
 
+class ClipDropLogo(Widget):
+    """Small vector mark combining Instagram, YouTube and a download arrow."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.bind(pos=self.redraw, size=self.redraw)
+        self.redraw()
+
+    def redraw(self, *_):
+        self.canvas.clear()
+        scale = min(self.width / dp(150), self.height / dp(96))
+        cx, cy = self.center
+        with self.canvas:
+            # Overlapping social tiles.
+            Color(0.55, 0.12, 0.91, 1)
+            RoundedRectangle(pos=(cx-dp(65)*scale, cy-dp(5)*scale),
+                             size=(dp(83)*scale, dp(70)*scale),
+                             radius=[dp(19)*scale])
+            Color(0.94, 0.12, 0.22, 1)
+            RoundedRectangle(pos=(cx-dp(8)*scale, cy-dp(5)*scale),
+                             size=(dp(83)*scale, dp(70)*scale),
+                             radius=[dp(19)*scale])
+            # Instagram camera mark.
+            Color(1, 1, 1, 1)
+            Line(rounded_rectangle=(cx-dp(53)*scale, cy+dp(8)*scale,
+                                    dp(46)*scale, dp(43)*scale, dp(11)*scale),
+                 width=dp(3)*scale)
+            Line(circle=(cx-dp(30)*scale, cy+dp(29)*scale, dp(10)*scale),
+                 width=dp(3)*scale)
+            Ellipse(pos=(cx-dp(18)*scale, cy+dp(42)*scale),
+                    size=(dp(5)*scale, dp(5)*scale))
+            # YouTube play mark.
+            Color(1, 1, 1, 1)
+            Triangle(points=[cx+dp(15)*scale, cy+dp(16)*scale,
+                             cx+dp(15)*scale, cy+dp(50)*scale,
+                             cx+dp(45)*scale, cy+dp(33)*scale])
+            # Download arrow and tray.
+            Color(0.34, 0.13, 0.78, 1)
+            Line(points=[cx, cy-dp(1)*scale, cx, cy-dp(23)*scale],
+                 width=dp(7)*scale, cap="round")
+            Line(points=[cx-dp(12)*scale, cy-dp(12)*scale,
+                         cx, cy-dp(24)*scale,
+                         cx+dp(12)*scale, cy-dp(12)*scale],
+                 width=dp(7)*scale, cap="round", joint="round")
+            Line(points=[cx-dp(29)*scale, cy-dp(30)*scale,
+                         cx-dp(29)*scale, cy-dp(38)*scale,
+                         cx+dp(29)*scale, cy-dp(38)*scale,
+                         cx+dp(29)*scale, cy-dp(30)*scale],
+                 width=dp(5)*scale, cap="round", joint="round")
+
+
 class ContactAction(ButtonBehavior, BoxLayout):
     def __init__(self, icon, icon_color, title, subtitle, url, **kw):
         super().__init__(orientation="horizontal", padding=(dp(16), dp(10)),
@@ -263,9 +313,7 @@ class Root(BoxLayout):
         scroll, content = self._make_scroll_page()
         hero = BoxLayout(orientation="vertical", spacing=dp(2),
                          size_hint_y=None, height=dp(166))
-        brand_mark = Label(text="◎   ▶   ⇩", font_name=FONT, font_size="50sp",
-                           bold=True, color=(0.49, 0.16, 0.91, 1),
-                           size_hint_y=None, height=dp(88))
+        brand_mark = ClipDropLogo(size_hint_y=None, height=dp(96))
         brand = Label(text="[color=151A3D][b]Clip[/b][/color][color=8A27DD][b]Drop[/b][/color]",
                       markup=True, font_name=FONT, font_size="32sp",
                       size_hint_y=None, height=dp(42))
