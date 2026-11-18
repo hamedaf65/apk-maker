@@ -1,4 +1,4 @@
-"""Social Downloader - Android (Kivy) UI. Creator: Hamed Afshari."""
+"""SociaSave — Android social media downloader by Hamed AI."""
 import os
 import shutil
 import threading
@@ -261,6 +261,7 @@ class Root(BoxLayout):
         self.status_ring = None
         self.status_title = None
         self.status_detail = None
+        self.status_close_btn = None
         self.spin_animation = None
         self.current_view = None
         Window.clearcolor = (0.975, 0.965, 1, 1)
@@ -272,6 +273,12 @@ class Root(BoxLayout):
             Color(1, 0.77, 0.70, 0.22)
             self._blob_bottom = Ellipse()
         self.bind(pos=self._sync_background, size=self._sync_background)
+        if platform == "android":
+            try:
+                native_dir = str(PythonActivity.mActivity.getApplicationInfo().nativeLibraryDir)
+                os.environ["SOCIASAVE_NATIVE_LIB_DIR"] = native_dir
+            except Exception:
+                pass
         self.main_view = self.build_download()
         self.contact_view = self.build_contact()
         self.show_main()
@@ -496,19 +503,29 @@ class Root(BoxLayout):
     def show_processing(self):
         if self.status_popup:
             self.status_popup.dismiss()
-        panel = BoxLayout(orientation="vertical", padding=18, spacing=12)
-        self.status_ring = StatusRing(size_hint=(1, None), height=dp(106))
-        title = Label(text="Downloading...", font_name=FONT, font_size="19sp",
-                      color=(0.10, 0.09, 0.24, 1), size_hint_y=None, height=34)
-        self.status_title = title
-        self.status_detail = label("در حال دریافت محتوا؛ لطفاً برنامه را نبندید",
-                                   height=52, halign="center", color=(0.38, 0.37, 0.51, 1))
+        panel = BoxLayout(orientation="vertical", padding=(dp(20), dp(18)), spacing=dp(10))
+        self.status_ring = StatusRing(size_hint=(1, None), height=dp(112))
+        self.status_title = Label(
+            text="Downloading...", font_name=FONT, font_size="19sp",
+            color=(0.12, 0.10, 0.26, 1), size_hint_y=None, height=dp(36))
+        self.status_detail = Label(
+            text="در حال دریافت محتوا؛ لطفاً برنامه را نبندید",
+            font_name=FONT, font_size="14sp", color=(0.36, 0.34, 0.49, 1),
+            size_hint_y=None, height=dp(82), halign="center", valign="middle")
+        self.status_detail.bind(size=lambda widget, size: setattr(widget, "text_size", size))
+        self.status_close_btn = button(
+            "Close", size_hint_y=None, height=dp(46),
+            fill=(0.93, 0.89, 1, 1), color=(0.20, 0.14, 0.36, 1))
+        self.status_close_btn.disabled = True
+        self.status_close_btn.bind(on_release=lambda *_: self.dismiss_status())
         panel.add_widget(self.status_ring)
-        panel.add_widget(title)
+        panel.add_widget(self.status_title)
         panel.add_widget(self.status_detail)
-        self.status_popup = Popup(title="", content=panel, size_hint=(0.84, None),
-                                  height=dp(280), auto_dismiss=False,
-                                  separator_height=0, background_color=(1, 1, 1, 1))
+        panel.add_widget(self.status_close_btn)
+        self.status_popup = Popup(
+            title="", content=panel, size_hint=(0.88, None), height=dp(350),
+            auto_dismiss=False, separator_height=0,
+            background="", background_color=(0.99, 0.98, 1, 1))
         self.status_ring.on_finished = self.dismiss_status
         self.status_popup.open()
         self.spin_animation = Animation(angle=360, duration=1.05)
@@ -539,6 +556,7 @@ class Root(BoxLayout):
             self.status_ring.state = "error"
             self.status_title.text = "Download failed"
             self.status_detail.text = failures[0] if failures else fa("دانلود انجام نشد؛ لینک را بررسی کنید.")
+        self.status_close_btn.disabled = False
         self.status_ring.redraw()
 
     def dismiss_status(self):
@@ -632,6 +650,9 @@ class Root(BoxLayout):
             return False
         try:
             Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+            if not Storage.isInstagramLoginVisible():
+                self.login_open = False
+                return False
             raw = str(Storage.getInstagramCookies() or "")
         except Exception:
             return True
@@ -643,11 +664,11 @@ class Root(BoxLayout):
                 if "=" in part:
                     key, value = part.strip().split("=", 1)
                     prefix = "#HttpOnly_" if key.lower() in ("sessionid", "csrftoken") else ""
-                    lines.append("%s.instagram.com\\tTRUE\\t/\\tTRUE\\t%d\\t%s\\t%s" %
+                    lines.append("%s.instagram.com\tTRUE\t/\tTRUE\t%d\t%s\t%s" %
                                  (prefix, expiry, key, value))
             os.makedirs(self.user_dir, exist_ok=True)
             with open(self.cookies_path, "w", encoding="utf-8") as handle:
-                handle.write("\\n".join(lines) + "\\n")
+                handle.write("\n".join(lines) + "\n")
             self._close_webview()
             self.log(fa("✔ ورود انجام شد. به SociaSave برگشتید؛ لینک را دانلود کنید."))
             return False
