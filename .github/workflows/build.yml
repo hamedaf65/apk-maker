@@ -42,6 +42,19 @@ jobs:
             ~/.buildozer
             .buildozer
           key: sociasave-p4a-develop-${{ hashFiles('buildozer.spec') }}
+      - name: Validate cached source archives
+        shell: bash
+        run: |
+          for cache_root in .buildozer "$HOME/.buildozer"; do
+            if [ -d "$cache_root" ]; then
+              while IFS= read -r -d '' archive; do
+                if ! unzip -tq "$archive" >/dev/null 2>&1; then
+                  echo "Removing corrupted cached archive: $archive"
+                  rm -f "$archive"
+                fi
+              done < <(find "$cache_root" -type f -path '*/packages/*.zip' -print0)
+            fi
+          done
       - name: Remove stale p4a temporary environments
         run: |
           if [ -d .buildozer ]; then
