@@ -87,10 +87,13 @@ def merge_separate_audio_video(folder, log):
         log("FFmpeg is not available; cannot combine separate media tracks.")
         return False
 
+    # Ignore still photos: FFmpeg reports image files as video-only streams,
+    # which would otherwise make a carousel look like several Reel video tracks.
+    stream_extensions = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
     files = [
         os.path.join(folder, name) for name in os.listdir(folder)
         if os.path.isfile(os.path.join(folder, name))
-        and os.path.splitext(name)[1].lower() in MEDIA_EXTENSIONS
+        and os.path.splitext(name)[1].lower() in stream_extensions
     ]
     video_only, audio_only = [], []
     for path in files:
