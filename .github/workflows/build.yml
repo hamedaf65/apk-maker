@@ -35,7 +35,22 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
 
       - name: Build APK
-        run: yes | buildozer -v android debug
+        run: yes | buildozer -v android debug > build.log 2>&1
+
+      - name: Show error summary (only if build failed)
+        if: failure()
+        run: |
+          echo "===== LINES WITH ERRORS ====="
+          grep -n -i -E "error|failed|exception|not found" build.log | grep -v -i "ccache\|warning" | tail -n 30
+          echo "===== LAST 50 LINES ====="
+          tail -n 50 build.log
+
+      - name: Save full log (only if build failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
