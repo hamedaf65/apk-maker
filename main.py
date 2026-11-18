@@ -22,6 +22,7 @@ from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
 from kivy.uix.textinput import TextInput
+from kivy.uix.widget import Widget
 from kivy.utils import platform
 
 import core
@@ -131,8 +132,8 @@ class StatusRing(Widget):
 
 
 def button(text, **kw):
-    value = fa(text) if any("\\u0600" <= ch <= "\\u06ff" for ch in text) else text
-    return RoundedButton(text=value, font_name=FONT, **kw)
+    value = fa(text) if any("\u0600" <= ch <= "\u06ff" for ch in text) else text
+    return RoundedButton(text=value, **kw)
 
 
 def label(text, height=36, halign="right", **kw):
@@ -177,7 +178,13 @@ class Root(BoxLayout):
     # ------------------------------------------------------------ tabs
     def build_download(self):
         box = BoxLayout(orientation="vertical", padding=6, spacing=8)
-        box.add_widget(label("لینک پست اینستاگرام یا ویدئوی یوتیوب را اینجا بچسبانید"))
+        box.add_widget(label("◎   ▶   ↓", height=82, halign="center", font_size="46sp",
+                             color=(0.43, 0.16, 0.88, 1)))
+        box.add_widget(label("ClipDrop", height=46, halign="center", font_size="30sp",
+                             color=(0.10, 0.09, 0.25, 1)))
+        box.add_widget(label("دانلود محتوا از اینستاگرام و یوتیوب؛ کافیه لینک رو اینجا بفرستی",
+                             height=48, halign="center", font_size="14sp"))
+        box.add_widget(label("آدرس لینک پست مورد نظر خود را اینجا قرار دهید:"))
         self.url = TextInput(multiline=True, size_hint_y=None, height=100)
         box.add_widget(self.url)
 
