@@ -1,4 +1,7 @@
 name: Build ClipDrop APK
+concurrency:
+  group: clipdrop-android-${{ github.ref }}
+  cancel-in-progress: true
 on:
   workflow_dispatch:
   push:
