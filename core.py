@@ -77,11 +77,15 @@ def _probe_streams(path):
 
 
 def merge_separate_audio_video(folder, log):
-    """Mux a Reel's separate audio/video tracks into one playable MP4/MKV."""
+    """Mux a Reel's separate audio/video tracks into one playable MP4/MKV.
+
+    Returns True when there is already a combined media file or a merge succeeds.
+    Returns False when tracks were found but could not be safely merged.
+    """
     executable = _ffmpeg_path()
     if not executable:
-        log("FFmpeg is not available; keeping the original media tracks.")
-        return []
+        log("FFmpeg is not available; cannot combine separate media tracks.")
+        return False
 
     files = [
         os.path.join(folder, name) for name in os.listdir(folder)
@@ -96,13 +100,11 @@ def merge_separate_audio_video(folder, log):
         elif has_audio and not has_video:
             audio_only.append(path)
 
-    merged_files = []
-    # A post/reel directory is one logical media item. Avoid guessing where
-    # several video-only and audio-only tracks cannot be matched unambiguously.
+    if not video_only and not audio_only:
+        return True
     if len(video_only) != 1 or len(audio_only) != 1:
-        if video_only or audio_only:
-            log("Separate media tracks detected but not uniquely pairable; original files retained.")
-        return merged_files
+        log("Separate media tracks detected but not uniquely pairable; original files retained.")
+        return False
 
     video_path, audio_path = video_only[0], audio_only[0]
     video_ext = os.path.splitext(video_path)[1].lower()
@@ -111,19 +113,18 @@ def merge_separate_audio_video(folder, log):
     stem = os.path.splitext(os.path.basename(video_path))[0]
     output_path = os.path.join(folder, stem + "_with_audio" + output_ext)
     temporary = output_path + ".part" + output_ext
-    if os.path.exists(output_path):
-        return [output_path]
+    if os.path.exists(output_path) and _probe_streams(output_path) == (True, True):
+        return True
 
     base_command = [
         executable, "-y", "-hide_banner", "-loglevel", "error",
         "-i", video_path, "-i", audio_path,
         "-map", "0:v:0", "-map", "1:a:0", "-shortest",
     ]
-    # First try lossless stream copy. If the audio codec is not accepted by
-    # the selected container, encode only the audio stream as AAC.
+    faststart = ["-movflags", "+faststart"] if output_ext == ".mp4" else []
     attempts = [
-        base_command + ["-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", temporary],
-        base_command + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temporary],
+        base_command + ["-c:v", "copy", "-c:a", "copy"] + faststart + [temporary],
+        base_command + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"] + faststart + [temporary],
     ]
     for command in attempts:
         try:
@@ -132,14 +133,17 @@ def merge_separate_audio_video(folder, log):
             result = subprocess.run(command, capture_output=True, text=True, timeout=240)
             if result.returncode == 0 and os.path.isfile(temporary) and os.path.getsize(temporary) > 0:
                 os.replace(temporary, output_path)
+                has_video, has_audio = _probe_streams(output_path)
+                if not (has_video and has_audio):
+                    os.remove(output_path)
+                    continue
                 for source in (video_path, audio_path):
                     try:
                         os.remove(source)
                     except OSError:
                         pass
                 log("Separate video and audio tracks merged into one file.")
-                merged_files.append(output_path)
-                return merged_files
+                return True
             log("FFmpeg merge attempt failed: " + (result.stderr or "unknown error")[-600:])
         except Exception as exc:
             log("FFmpeg merge error: " + str(exc))
@@ -149,8 +153,7 @@ def merge_separate_audio_video(folder, log):
     except OSError:
         pass
     log("Could not merge the media tracks; original audio/video files were preserved.")
-    return merged_files
-
+    return False
 
 
 class _LogHandler(logging.Handler):
@@ -256,7 +259,8 @@ def download_instagram(url, root, cookies_file, log):
         # gallery-dl can expose Reel video/audio tracks as separate files.
         # Merge each saved post directory before reporting success.
         for destination in dict.fromkeys(folders):
-            merge_separate_audio_video(destination, log)
+            if not merge_separate_audio_video(destination, log):
+                raise DownloadError("Instagram Reel returned separate audio/video tracks, but FFmpeg could not combine them. Original tracks were kept.")
 
         if not folders:
             raise DownloadError("Instagram extractor returned no files that could be saved.")
@@ -294,12 +298,8 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
     import yt_dlp
 
     if not _ffmpeg_path():
-        log("FFmpeg is unavailable; yt-dlp may only return progressive single-file formats.")
+        raise DownloadError("FFmpeg is not available in this build; YouTube video/audio merging cannot run.")
 
-    owner, video_id, info = "YouTube", "video", None
-    # Recent YouTube anti-bot/PO-token changes affect different player clients.
-    # web_safari can expose HLS streams without GVS PO tokens at the time of writing;
-    # web_embedded is a limited fallback for videos that allow embedding.
     client_attempts = (["web_safari"], ["web_embedded"])
     last_error = None
     for player_clients in client_attempts:
@@ -315,61 +315,61 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
         }
         if cookies_file and os.path.isfile(cookies_file):
             options["cookiefile"] = cookies_file
-        log("YouTube: checking available formats with " + ", ".join(player_clients) + ".")
+
+        log("YouTube: trying player " + ", ".join(player_clients) + ".")
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
-                candidate = downloader.extract_info(url, download=False)
-            if not isinstance(candidate, dict):
-                raise DownloadError("YouTube did not return video information.")
-            if not candidate.get("formats"):
+                info = downloader.extract_info(url, download=False)
+            if not isinstance(info, dict) or not info.get("formats"):
                 raise DownloadError("YouTube returned no downloadable formats for this player.")
-            info = candidate
-            break
+            if info.get("is_live") and not info.get("was_live"):
+                raise DownloadError("Live streams are not supported.")
+
+            owner = info.get("uploader_id") or info.get("channel") or info.get("uploader") or "YouTube"
+            video_id = info.get("id") or "video"
+            destination = os.path.join(root, safe(str(owner).lstrip("@")), safe(video_id))
+            os.makedirs(destination, exist_ok=True)
+
+            def progress_hook(data):
+                if not on_progress:
+                    return
+                if data.get("status") == "downloading":
+                    total = data.get("total_bytes") or data.get("total_bytes_estimate")
+                    if total:
+                        on_progress((data.get("downloaded_bytes") or 0) * 100.0 / total)
+                elif data.get("status") == "finished":
+                    on_progress(100)
+
+            options.update({
+                # Select separate high-quality video and audio; FFmpeg muxes them.
+                "format": "bv*+ba/b",
+                "merge_output_format": "mkv",
+                "outtmpl": os.path.join(destination, "%(title).100B.%(ext)s"),
+                "progress_hooks": [progress_hook],
+                "overwrites": False,
+            })
+            with yt_dlp.YoutubeDL(options) as downloader:
+                result = downloader.download([url])
+            if result not in (None, 0):
+                raise DownloadError(f"yt-dlp returned exit code {result}.")
+
+            # Confirm at least one saved file actually contains both streams.
+            saved_media = _media_files(destination)
+            combined = [path for path in saved_media if _probe_streams(path) == (True, True)]
+            if not combined:
+                merged = merge_separate_audio_video(destination, log)
+                saved_media = _media_files(destination)
+                combined = [path for path in saved_media if _probe_streams(path) == (True, True)]
+                if not merged or not combined:
+                    raise DownloadError("YouTube finished without a single file containing both video and audio.")
+            log("YouTube video saved as a single media file.")
+            return destination
         except Exception as exc:
             last_error = exc
-            log("YouTube player attempt failed: " + repr(exc))
-    if info is None:
-        raise DownloadError(str(last_error or "No YouTube formats were available."))
+            log("YouTube player " + ",".join(player_clients) + " failed: " + repr(exc))
+            continue
 
-    if info.get("is_live") and not info.get("was_live"):
-        raise DownloadError("Live streams are not supported.")
-
-    owner = info.get("uploader_id") or info.get("channel") or info.get("uploader") or "YouTube"
-    video_id = info.get("id") or "video"
-    destination = os.path.join(root, safe(str(owner).lstrip("@")), safe(video_id))
-    os.makedirs(destination, exist_ok=True)
-
-    def progress_hook(data):
-        if not on_progress:
-            return
-        if data.get("status") == "downloading":
-            total = data.get("total_bytes") or data.get("total_bytes_estimate")
-            if total:
-                on_progress((data.get("downloaded_bytes") or 0) * 100.0 / total)
-        elif data.get("status") == "finished":
-            on_progress(100)
-
-    options.update({
-        # Prefer separate high-quality video + audio; yt-dlp auto-merges using FFmpeg.
-        "format": "bv*+ba/b",
-        "merge_output_format": "mp4/mkv",
-        "outtmpl": os.path.join(destination, "%(title).100B.%(ext)s"),
-        "progress_hooks": [progress_hook],
-        "overwrites": False,
-    })
-    try:
-        with yt_dlp.YoutubeDL(options) as downloader:
-            result = downloader.download([url])
-        if result not in (None, 0):
-            raise DownloadError(f"yt-dlp returned exit code {result}.")
-    except Exception as exc:
-        raise DownloadError(str(exc)) from exc
-
-    if not _media_files(destination):
-        raise DownloadError("No video file was saved. This video may require a PO Token or may not be available to this player.")
-    log("YouTube video saved as a single media file.")
-    return destination
-
+    raise DownloadError(str(last_error or "No YouTube player could provide a downloadable video."))
 
 def run(url, root, cookies_file, log, on_progress=None):
     lowered = (url or "").lower()
