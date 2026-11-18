@@ -1,6 +1,7 @@
-"""Separate download engine used by the ClipDrop mobile UI."""
+"""SociaSave media extraction and archive engine."""
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -16,59 +17,190 @@ except Exception:
 
 
 class DownloadError(RuntimeError):
-    """A download failed or produced no media."""
+    """A download failed or produced no usable media."""
 
 
 class NeedLogin(DownloadError):
-    """A service requires a valid authenticated session."""
+    """A public or authenticated session is required."""
 
 
 MEDIA_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic", ".heif",
-    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp", ".mp3", ".m4a",
-    ".aac", ".wav", ".ogg", ".opus", ".flac",
+    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp",
+    ".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac",
 }
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp"}
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic", ".heif"}
 
 
-def safe(name):
-    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(name)).strip(" .")
-    return value[:120] or "unknown"
+def safe(value):
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or "")).strip(" .")
+    text = re.sub(r"\s+", "_", text)
+    return text[:100] or "unknown"
 
 
 def extract_urls(text):
     urls = re.findall(r"https?://[^\s<>\"']+", text or "")
-    return [url.rstrip(".,;!?)]}>") for url in urls]
+    result = []
+    for url in urls:
+        cleaned = url.rstrip(".,;!?)]}>")
+        if cleaned and cleaned not in result:
+            result.append(cleaned)
+    return result
+
+
+def detect_platform(url):
+    value = (url or "").lower()
+    if "instagram.com" in value:
+        return "instagram"
+    if "youtu.be" in value or "youtube.com" in value or "youtube-nocookie.com" in value:
+        return "youtube"
+    if "x.com" in value or "twitter.com" in value or "t.co/" in value:
+        return "twitter"
+    if "facebook.com" in value or "fb.watch" in value or "fb.com" in value:
+        return "facebook"
+    return None
 
 
 def _media_files(folder):
-    result = []
-    for current, _dirs, names in os.walk(folder):
+    found = []
+    for current, _directories, names in os.walk(folder):
         for name in names:
             if os.path.splitext(name)[1].lower() not in MEDIA_EXTENSIONS:
                 continue
             path = os.path.join(current, name)
             try:
-                if os.path.getsize(path) > 0:
-                    result.append(path)
+                if os.path.isfile(path) and os.path.getsize(path) > 0:
+                    found.append(path)
             except OSError:
                 pass
-    return result
+    return found
+
+
+def _deep_value(data, keys):
+    """Find the first useful metadata field, including nested owner/post objects."""
+    if not isinstance(data, dict):
+        return None
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()
+        if isinstance(value, dict):
+            nested = _deep_value(value, ("text", "full_text", "username", "name", "id", "pk"))
+            if nested:
+                return nested
+    for value in data.values():
+        if isinstance(value, dict):
+            result = _deep_value(value, keys)
+            if result:
+                return result
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    result = _deep_value(item, keys)
+                    if result:
+                        return result
+    return None
+
+
+def _caption(metadata):
+    return _deep_value(metadata, (
+        "caption", "description", "full_text", "tweet_text", "text",
+        "content", "message", "title", "body",
+    )) or ""
+
+
+def _account_id(metadata):
+    account = _deep_value(metadata, (
+        "owner_id", "user_id", "author_id", "uploader_id", "channel_id",
+        "screen_name", "username", "user_name", "account_id",
+    ))
+    if account:
+        return safe(account.lstrip("@"))
+    return "unknown"
+
+
+def _post_id(metadata, url):
+    post_id = _deep_value(metadata, (
+        "post_shortcode", "shortcode", "tweet_id", "post_id", "media_id",
+        "video_id", "id_str", "id", "pk",
+    ))
+    if post_id:
+        return safe(post_id)
+    match = re.search(
+        r"/(?:reel|reels|p|tv|status|statuses|watch)/([A-Za-z0-9_-]+)",
+        url or "", re.I
+    )
+    return safe(match.group(1) if match else "post_" + str(abs(hash(url or ""))))
+
+
+def _write_post_text(folder, caption, source_url):
+    os.makedirs(folder, exist_ok=True)
+    caption_text = (caption or "").strip()
+    if not caption_text:
+        caption_text = "Caption was not provided by the source platform."
+    with open(os.path.join(folder, "caption.txt"), "w", encoding="utf-8") as handle:
+        handle.write(caption_text + "\n")
+    with open(os.path.join(folder, "source.txt"), "w", encoding="utf-8") as handle:
+        handle.write((source_url or "").strip() + "\n")
+
+
+def _safe_move(source, destination):
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    target = destination
+    if os.path.exists(target):
+        stem, extension = os.path.splitext(target)
+        index = 2
+        while os.path.exists(f"{stem}_{index}{extension}"):
+            index += 1
+        target = f"{stem}_{index}{extension}"
+    shutil.move(source, target)
+    return target
+
 
 def _ffmpeg_path():
-    return shutil.which("ffmpeg")
+    """Find the p4a FFmpeg executable, including Android's renamed native binary."""
+    regular = shutil.which("ffmpeg")
+    if regular:
+        return regular
+    try:
+        from jnius import autoclass
+        from android import mActivity
+        activity = mActivity
+        native_dir = str(activity.getApplicationInfo().nativeLibraryDir)
+        candidate = os.path.join(native_dir, "libffmpegbin.so")
+        if os.path.isfile(candidate):
+            os.environ["LD_LIBRARY_PATH"] = native_dir + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def ffmpeg_diagnostic():
+    executable = _ffmpeg_path()
+    if not executable:
+        return "FFmpeg executable was not found in PATH or Android nativeLibraryDir."
+    try:
+        result = subprocess.run(
+            [executable, "-version"], capture_output=True, text=True, timeout=20
+        )
+        if result.returncode != 0:
+            return "FFmpeg exists but did not start: " + (result.stderr or result.stdout or "")[-500:]
+        return "FFmpeg ready: " + (result.stdout or "").splitlines()[0]
+    except Exception as exc:
+        return "FFmpeg could not start: " + repr(exc)
 
 
 def _probe_streams(path):
-    """Return (has_video, has_audio) using the bundled FFmpeg binary."""
     executable = _ffmpeg_path()
     if not executable:
         return False, False
     try:
         result = subprocess.run(
             [executable, "-hide_banner", "-i", path],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=30
         )
         details = (result.stderr or "") + (result.stdout or "")
         return "Video:" in details, "Audio:" in details
@@ -77,18 +209,12 @@ def _probe_streams(path):
 
 
 def merge_separate_audio_video(folder, log):
-    """Mux a Reel's separate audio/video tracks into one playable MP4/MKV.
-
-    Returns True when there is already a combined media file or a merge succeeds.
-    Returns False when tracks were found but could not be safely merged.
-    """
+    """Mux one video-only and one audio-only source into a single file."""
     executable = _ffmpeg_path()
     if not executable:
-        log("FFmpeg is not available; cannot combine separate media tracks.")
+        log("FFmpeg missing: " + ffmpeg_diagnostic())
         return False
 
-    # Ignore still photos: FFmpeg reports image files as video-only streams,
-    # which would otherwise make a carousel look like several Reel video tracks.
     stream_extensions = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
     files = [
         os.path.join(folder, name) for name in os.listdir(folder)
@@ -106,38 +232,31 @@ def merge_separate_audio_video(folder, log):
     if not video_only and not audio_only:
         return True
     if len(video_only) != 1 or len(audio_only) != 1:
-        log("Separate media tracks detected but not uniquely pairable; original files retained.")
+        log("Separate audio/video files could not be paired uniquely; original files preserved.")
         return False
 
     video_path, audio_path = video_only[0], audio_only[0]
-    video_ext = os.path.splitext(video_path)[1].lower()
-    audio_ext = os.path.splitext(audio_path)[1].lower()
-    output_ext = ".mp4" if video_ext in {".mp4", ".m4v"} and audio_ext in {".m4a", ".aac", ".mp3"} else ".mkv"
-    stem = os.path.splitext(os.path.basename(video_path))[0]
-    output_path = os.path.join(folder, stem + "_with_audio" + output_ext)
-    temporary = output_path + ".part" + output_ext
-    if os.path.exists(output_path) and _probe_streams(output_path) == (True, True):
-        return True
-
-    base_command = [
+    output_path = os.path.join(
+        folder, os.path.splitext(os.path.basename(video_path))[0] + "_with_audio.mkv"
+    )
+    temporary = output_path + ".part.mkv"
+    base = [
         executable, "-y", "-hide_banner", "-loglevel", "error",
         "-i", video_path, "-i", audio_path,
         "-map", "0:v:0", "-map", "1:a:0", "-shortest",
     ]
-    faststart = ["-movflags", "+faststart"] if output_ext == ".mp4" else []
     attempts = [
-        base_command + ["-c:v", "copy", "-c:a", "copy"] + faststart + [temporary],
-        base_command + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"] + faststart + [temporary],
+        base + ["-c:v", "copy", "-c:a", "copy", temporary],
+        base + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", temporary],
     ]
     for command in attempts:
         try:
             if os.path.exists(temporary):
                 os.remove(temporary)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=240)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=300)
             if result.returncode == 0 and os.path.isfile(temporary) and os.path.getsize(temporary) > 0:
                 os.replace(temporary, output_path)
-                has_video, has_audio = _probe_streams(output_path)
-                if not (has_video and has_audio):
+                if _probe_streams(output_path) != (True, True):
                     os.remove(output_path)
                     continue
                 for source in (video_path, audio_path):
@@ -145,42 +264,41 @@ def merge_separate_audio_video(folder, log):
                         os.remove(source)
                     except OSError:
                         pass
-                log("Separate video and audio tracks merged into one file.")
+                log("Separate video and audio streams successfully merged.")
                 return True
-            log("FFmpeg merge attempt failed: " + (result.stderr or "unknown error")[-600:])
+            log("FFmpeg mux attempt failed: " + (result.stderr or "no diagnostic")[-700:])
         except Exception as exc:
-            log("FFmpeg merge error: " + str(exc))
+            log("FFmpeg mux exception: " + repr(exc))
     try:
         if os.path.exists(temporary):
             os.remove(temporary)
     except OSError:
         pass
-    log("Could not merge the media tracks; original audio/video files were preserved.")
     return False
 
 
-class _LogHandler(logging.Handler):
+class _GalleryLogHandler(logging.Handler):
     def __init__(self, log):
         super().__init__(logging.INFO)
-        self._write_log = log
+        self._log = log
 
     def emit(self, record):
         try:
-            self._write_log(record.getMessage())
+            self._log(record.getMessage())
         except Exception:
             pass
 
 
-def download_instagram(url, root, cookies_file, log):
-    """Download supported Instagram posts/reels; retain media even without sidecar metadata."""
+def _download_gallery_post(url, root, platform_name, cookies_file, log):
+    """Use gallery-dl for image-rich Instagram and X posts, including carousels."""
     from gallery_dl import config, job
 
-    temp_root = tempfile.mkdtemp(prefix="clipdrop_ig_", dir=root)
-    handler = _LogHandler(log)
-    root_logger = logging.getLogger()
-    previous_level = root_logger.level
-    root_logger.addHandler(handler)
-    root_logger.setLevel(min(previous_level or logging.WARNING, logging.INFO))
+    temp_root = tempfile.mkdtemp(prefix="sociasave_" + platform_name + "_", dir=root)
+    handler = _GalleryLogHandler(log)
+    logger = logging.getLogger()
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(min(old_level or logging.WARNING, logging.INFO))
     try:
         config.clear()
         config.set(("extractor",), "base-directory", temp_root)
@@ -189,29 +307,25 @@ def download_instagram(url, root, cookies_file, log):
         config.set(("extractor",), "postprocessors", [
             {"name": "metadata", "mode": "json", "filename": "{filename}.{extension}.json"}
         ])
-        # gallery-dl supports both individual Posts and Reels; videos=True makes
-        # video media explicit rather than silently limiting downloads to photos.
-        config.set(("extractor", "instagram"), "include", "posts,reels")
-        config.set(("extractor", "instagram"), "videos", True)
-        config.set(("extractor", "instagram"), "audio", True)
-        config.set(("extractor", "instagram"), "previews", False)
-        if cookies_file and os.path.isfile(cookies_file):
-            config.set(("extractor", "instagram"), "cookies", cookies_file)
-            log("Instagram: using saved app-private session cookies.")
-        else:
-            log("Instagram: attempting public post/reel access.")
-
+        if platform_name == "instagram":
+            config.set(("extractor", "instagram"), "include", "posts,reels")
+            config.set(("extractor", "instagram"), "videos", True)
+            config.set(("extractor", "instagram"), "audio", True)
+            config.set(("extractor", "instagram"), "previews", False)
+            if cookies_file and os.path.isfile(cookies_file):
+                config.set(("extractor", "instagram"), "cookies", cookies_file)
+                log("Instagram: using saved app-private session cookies.")
+        elif platform_name == "twitter":
+            log("X/Twitter: downloading media from the public post.")
         job.DownloadJob(url).run()
+
         media = _media_files(temp_root)
         if not media:
-            if cookies_file:
-                raise NeedLogin("No media returned with saved cookies; the session may be expired or Instagram may require a new login.")
-            raise NeedLogin("No media returned. This post may require an Instagram login or may be unavailable.")
+            if platform_name == "instagram":
+                raise NeedLogin("Instagram returned no media. The session may have expired or the post may require access.")
+            raise DownloadError("X/Twitter returned no public media for this post.")
 
-        # Match media to metadata where possible, but do not depend on JSON
-        # sidecars: some Reel responses produce video files without sidecars.
-        moved = set()
-        folders = []
+        folders, moved, captions = [], set(), {}
         for current, _dirs, names in os.walk(temp_root):
             for name in names:
                 if not name.lower().endswith(".json"):
@@ -223,59 +337,53 @@ def download_instagram(url, root, cookies_file, log):
                 try:
                     with open(sidecar, "r", encoding="utf-8") as handle:
                         metadata = json.load(handle)
-                    owner = metadata.get("username") or (metadata.get("owner") or {}).get("username") or "Instagram"
-                    post_id = metadata.get("post_shortcode") or metadata.get("shortcode") or metadata.get("post_id") or "post"
                 except Exception:
-                    owner, post_id = "Instagram", "post"
-                destination = os.path.join(root, safe(owner), safe(post_id))
+                    metadata = {}
+
+                account_id = _account_id(metadata)
+                post_id = _post_id(metadata, url)
+                destination = os.path.join(root, platform_name, account_id, post_id)
                 os.makedirs(destination, exist_ok=True)
                 target = os.path.join(destination, os.path.basename(media_path))
-                if os.path.exists(target):
-                    stem, ext = os.path.splitext(target)
-                    index = 2
-                    while os.path.exists(f"{stem}_{index}{ext}"):
-                        index += 1
-                    target = f"{stem}_{index}{ext}"
-                shutil.move(media_path, target)
+                saved = _safe_move(media_path, target)
                 moved.add(os.path.abspath(media_path))
+                captions[destination] = _caption(metadata) or captions.get(destination, "")
                 if destination not in folders:
                     folders.append(destination)
 
-        # Fallback: media exists but extractor did not supply a paired JSON file.
-        remaining = [path for path in media if os.path.exists(path) and os.path.abspath(path) not in moved]
+        remaining = [
+            path for path in media
+            if os.path.exists(path) and os.path.abspath(path) not in moved
+        ]
         if remaining:
-            match = re.search(r"/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
-            post_id = safe(match.group(1) if match else "instagram_post")
-            destination = os.path.join(root, "Instagram", post_id)
+            account_id = "unknown"
+            post_id = _post_id({}, url)
+            destination = os.path.join(root, platform_name, account_id, post_id)
             os.makedirs(destination, exist_ok=True)
             for media_path in remaining:
-                target = os.path.join(destination, os.path.basename(media_path))
-                if os.path.exists(target):
-                    stem, ext = os.path.splitext(target)
-                    index = 2
-                    while os.path.exists(f"{stem}_{index}{ext}"):
-                        index += 1
-                    target = f"{stem}_{index}{ext}"
-                shutil.move(media_path, target)
-            folders.append(destination)
+                _safe_move(media_path, os.path.join(destination, os.path.basename(media_path)))
+            if destination not in folders:
+                folders.append(destination)
 
-        # gallery-dl can expose Reel video/audio tracks as separate files.
-        # Merge each saved post directory before reporting success.
-        for destination in dict.fromkeys(folders):
+        for destination in folders:
+            _write_post_text(destination, captions.get(destination, ""), url)
             if not merge_separate_audio_video(destination, log):
-                raise DownloadError("Instagram Reel returned separate audio/video tracks, but FFmpeg could not combine them. Original tracks were kept.")
+                raise DownloadError(
+                    platform_name + " returned separate audio/video tracks, but FFmpeg could not combine them. "
+                    "Original tracks were preserved in the staging folder."
+                )
 
         if not folders:
-            raise DownloadError("Instagram extractor returned no files that could be saved.")
-        log("Instagram media saved.")
-        return folders[-1]
-    except NeedLogin:
+            raise DownloadError("The extractor found files but could not organize them.")
+        log(platform_name + " post media saved into its account/post folder.")
+        return folders[0]
+    except (NeedLogin, DownloadError):
         raise
     except Exception as exc:
-        raise DownloadError(f"Instagram download failed: {exc}") from exc
+        raise DownloadError(platform_name + " extraction failed: " + str(exc)) from exc
     finally:
-        root_logger.removeHandler(handler)
-        root_logger.setLevel(previous_level)
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
@@ -290,24 +398,23 @@ class _YtLogger:
         pass
 
     def warning(self, message):
-        self.log("YouTube warning: " + str(message))
+        self.log("Extractor warning: " + str(message))
 
     def error(self, message):
-        self.log("YouTube error: " + str(message))
+        self.log("Extractor error: " + str(message))
 
 
-def download_youtube(url, root, cookies_file, log, on_progress=None):
-    """Download a public YouTube video and mux separate audio/video streams."""
+def _download_ytdlp(url, root, platform_name, log, on_progress=None):
+    """Use yt-dlp for YouTube and Facebook video posts."""
     import yt_dlp
 
-    if not _ffmpeg_path():
-        raise DownloadError("FFmpeg is not available in this build; YouTube video/audio merging cannot run.")
+    executable = _ffmpeg_path()
+    if not executable:
+        raise DownloadError("FFmpeg is not executable on this device. " + ffmpeg_diagnostic())
 
-    # Start with yt-dlp's maintained default client set. Forcing a single
-    # client can return no formats on current YouTube deployments.
-    client_attempts = (None, ["web_embedded"], ["mweb"])
+    attempts = (None, ["web_embedded"], ["mweb"]) if platform_name == "youtube" else (None,)
     last_error = None
-    for player_clients in client_attempts:
+    for player_clients in attempts:
         options = {
             "quiet": True,
             "no_warnings": True,
@@ -315,26 +422,31 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
             "logger": _YtLogger(log),
             "retries": 3,
             "fragment_retries": 3,
-            "socket_timeout": 30,
+            "extractor_retries": 3,
+            "socket_timeout": 35,
+            "ffmpeg_location": executable,
         }
-        if player_clients:
-            options["extractor_args"] = {"youtube": {"player_client": player_clients}}
-        if cookies_file and os.path.isfile(cookies_file):
-            options["cookiefile"] = cookies_file
+        if platform_name == "youtube":
+            options["remote_components"] = ["ejs:github"]
+            if player_clients:
+                options["extractor_args"] = {"youtube": {"player_client": player_clients}}
 
-        label = "yt-dlp defaults" if not player_clients else ", ".join(player_clients)
-        log("YouTube: trying player set " + label + ".")
+        label = "yt-dlp defaults" if not player_clients else ",".join(player_clients)
+        log(platform_name + ": extracting metadata using " + label + ".")
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
                 info = downloader.extract_info(url, download=False)
             if not isinstance(info, dict) or not info.get("formats"):
-                raise DownloadError("YouTube returned no downloadable formats for this player.")
+                raise DownloadError(platform_name + " returned no downloadable formats.")
             if info.get("is_live") and not info.get("was_live"):
                 raise DownloadError("Live streams are not supported.")
 
-            owner = info.get("uploader_id") or info.get("channel") or info.get("uploader") or "YouTube"
-            video_id = info.get("id") or "video"
-            destination = os.path.join(root, safe(str(owner).lstrip("@")), safe(video_id))
+            account_id = safe(
+                info.get("channel_id") or info.get("uploader_id")
+                or info.get("channel") or info.get("uploader") or "unknown"
+            )
+            post_id = safe(info.get("id") or "post")
+            destination = os.path.join(root, platform_name, account_id, post_id)
             os.makedirs(destination, exist_ok=True)
 
             def progress_hook(data):
@@ -348,65 +460,81 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
                     on_progress(100)
 
             options.update({
-                # Select separate high-quality video and audio; FFmpeg muxes them.
                 "format": "bv*+ba/b",
                 "merge_output_format": "mkv",
-                "outtmpl": os.path.join(destination, "%(title).100B.%(ext)s"),
+                "outtmpl": os.path.join(destination, "%(title).120B.%(ext)s"),
                 "progress_hooks": [progress_hook],
                 "overwrites": False,
+                "keepvideo": False,
             })
             with yt_dlp.YoutubeDL(options) as downloader:
                 result = downloader.download([url])
             if result not in (None, 0):
-                raise DownloadError(f"yt-dlp returned exit code {result}.")
+                raise DownloadError("yt-dlp returned exit code " + str(result))
 
-            # Confirm at least one saved file actually contains both streams.
-            saved_media = _media_files(destination)
-            combined = [path for path in saved_media if _probe_streams(path) == (True, True)]
+            saved = _media_files(destination)
+            combined = [path for path in saved if _probe_streams(path) == (True, True)]
             if not combined:
                 merged = merge_separate_audio_video(destination, log)
-                saved_media = _media_files(destination)
-                combined = [path for path in saved_media if _probe_streams(path) == (True, True)]
+                saved = _media_files(destination)
+                combined = [path for path in saved if _probe_streams(path) == (True, True)]
                 if not merged or not combined:
-                    raise DownloadError("YouTube finished without a single file containing both video and audio.")
-            log("YouTube video saved as a single media file.")
+                    raise DownloadError(
+                        platform_name + " completed extraction but produced no single file containing both video and audio."
+                    )
+
+            _write_post_text(destination, info.get("description") or info.get("title") or "", url)
+            log(platform_name + " media and caption saved into the account/post folder.")
             return destination
         except Exception as exc:
             last_error = exc
-            log("YouTube player set " + label + " failed: " + repr(exc))
+            log(platform_name + " attempt (" + label + ") failed: " + repr(exc))
             continue
 
-    raise DownloadError(str(last_error or "No YouTube player could provide a downloadable video."))
+    raise DownloadError(str(last_error or platform_name + " could not extract this post."))
+
 
 def run(url, root, cookies_file, log, on_progress=None):
-    lowered = (url or "").lower()
-    if "instagram.com" in lowered:
-        return download_instagram(url, root, cookies_file, log)
-    if "youtube.com" in lowered or "youtu.be" in lowered:
-        return download_youtube(url, root, None, log, on_progress)
-    raise DownloadError("Unsupported link. Use an Instagram or YouTube URL.")
+    platform_name = detect_platform(url)
+    if not platform_name:
+        raise DownloadError("Unsupported link. Use Instagram, YouTube, X/Twitter or Facebook.")
+    os.makedirs(root, exist_ok=True)
+    log("Detected platform: " + platform_name)
+    if platform_name == "instagram":
+        return _download_gallery_post(url, root, platform_name, cookies_file, log)
+    if platform_name == "twitter":
+        return _download_gallery_post(url, root, platform_name, None, log)
+    return _download_ytdlp(url, root, platform_name, log, on_progress)
 
 
 def friendly_error(url, error):
-    message = str(error or "").lower()
-    instagram = "instagram.com" in (url or "").lower()
-
-    if instagram:
-        if any(word in message for word in ("429", "too many requests", "rate limit")):
+    platform_name = detect_platform(url) or "social media"
+    message = str(error or "")
+    lowered = message.lower()
+    if "ffmpeg" in lowered:
+        return "Media processing failed: " + message[:240]
+    if platform_name == "instagram":
+        if any(token in lowered for token in ("login", "checkpoint", "challenge", "401", "403", "session")):
+            return "Instagram needs a fresh login or access to this post. Tap Connect to Instagram and sign in again."
+        if "429" in lowered or "rate limit" in lowered:
             return "Instagram temporarily limited requests. Wait and retry later."
-        if any(word in message for word in ("login", "checkpoint", "challenge", "401", "403", "session")):
-            return "Instagram needs a fresh login or has challenged this session. Tap Connect to Instagram, sign in again, then retry."
-        return "Instagram could not download this post/reel. Check the link and account access, then try again."
-
-    if any(word in message for word in ("sign in to confirm", "confirm you're not a bot", "confirm you’re not a bot",
-                                        "age-restricted", "members-only", "private video", "login required")):
-        return ("YouTube requires account verification or restricts this video. This app does not embed Google sign-in; "
-                "try a public video that plays without login or age verification.")
-    if any(word in message for word in ("video unavailable", "not available in your country", "has been removed")):
-        return "This YouTube video is unavailable, removed or region-restricted."
-    if any(word in message for word in ("po token", "pot provider", "http error 403", "403 forbidden", "sabr")):
-        return ("YouTube blocked the available stream request (PO Token / SABR restriction). "
-                "This can affect some videos even when they play in the YouTube app or Chrome.")
-    if any(word in message for word in ("ffmpeg", "requested format", "format is not available")):
-        return "No compatible video/audio streams could be combined. Please retry with another public video."
-    return "YouTube could not download this video. Check the link and try a public, playable video."
+        return "Instagram could not retrieve this post. Check its link and account permissions."
+    if platform_name == "youtube":
+        if any(token in lowered for token in ("ejs", "javascript runtime", "deno", "js challenge")):
+            return "YouTube needs its JavaScript challenge runtime, which is not available in this build. A public video may still work when YouTube supplies a direct stream."
+        if any(token in lowered for token in ("po token", "pot provider", "403", "sabr", "not a bot")):
+            return "YouTube blocked this stream request with an anti-bot or PO Token check. This can happen even when the video plays in the YouTube app."
+        if any(token in lowered for token in ("sign in to confirm", "age-restricted", "members-only", "private video", "login required")):
+            return "This YouTube video requires login, age verification or membership. Try a public video."
+        if "unavailable" in lowered or "removed" in lowered:
+            return "This YouTube video is unavailable or region-restricted."
+        return "YouTube could not retrieve compatible media streams: " + message[:220]
+    if platform_name == "twitter":
+        if "login" in lowered or "protected" in lowered:
+            return "This X/Twitter post may be private or require an account session. Only accessible posts are supported."
+        return "X/Twitter could not retrieve media from this post: " + message[:220]
+    if platform_name == "facebook":
+        if any(token in lowered for token in ("login", "private", "cookie", "403")):
+            return "This Facebook post may require login or permission. Only publicly accessible content is supported."
+        return "Facebook could not retrieve compatible media: " + message[:220]
+    return "The link could not be downloaded: " + message[:220]
