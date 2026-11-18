@@ -4,20 +4,20 @@ package.name = socialdownloader
 package.domain = org.hamedafshari
 source.dir = .
 source.include_exts = py,ttf,xml
-version = 1.2
-requirements = python3,kivy==2.3.0,yt-dlp,gallery-dl==1.32.20,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
+version = 1.3
+requirements = python3,kivy==2.3.2,yt-dlp==2026.10.26,gallery-dl==1.32.20,ffmpeg,av_codecs,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
+android.permissions = INTERNET
 android.manifest.intent_filters = intent_filters.xml
 android.manifest.launch_mode = singleTask
-# Retain the existing compatibility setting for shared Downloads folder writes.
-android.api = 28
-android.minapi = 21
+# Android 16 target API; modern python-for-android toolchain.
+android.api = 36
+android.minapi = 24
 android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
-android.ndk = 25b
-p4a.branch = v2024.01.21
+android.ndk = 28c
+p4a.branch = v2026.05.09
 
 [buildozer]
 log_level = 2
