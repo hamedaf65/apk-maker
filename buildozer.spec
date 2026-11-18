@@ -1,6 +1,6 @@
 [app]
 title = SociaSave
-package.name = socialdownloader
+package.name = sociasave
 package.domain = org.hamedafshari
 source.dir = .
 source.include_exts = py,ttf,xml
