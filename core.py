@@ -1,5 +1,6 @@
 """SociaSave media extraction and archive engine."""
 import json
+import hashlib
 import logging
 import mimetypes
 import os
@@ -132,7 +133,10 @@ def _post_id(metadata, url):
         r"/(?:reel|reels|p|tv|status|statuses|watch)/([A-Za-z0-9_-]+)",
         url or "", re.I
     )
-    return safe(match.group(1) if match else "post_" + str(abs(hash(url or ""))))
+    if match:
+        return safe(match.group(1))
+    digest = hashlib.sha256((url or "").encode("utf-8")).hexdigest()[:16]
+    return "post_" + digest
 
 
 def _write_post_text(folder, caption, source_url):
@@ -165,10 +169,11 @@ def _ffmpeg_path():
     if regular:
         return regular
     try:
-        from jnius import autoclass
-        from android import mActivity
-        activity = mActivity
-        native_dir = str(activity.getApplicationInfo().nativeLibraryDir)
+        native_dir = os.environ.get("SOCIASAVE_NATIVE_LIB_DIR")
+        if not native_dir:
+            from jnius import autoclass
+            activity_class = autoclass("org.kivy.android.PythonActivity")
+            native_dir = str(activity_class.mActivity.getApplicationInfo().nativeLibraryDir)
         candidate = os.path.join(native_dir, "libffmpegbin.so")
         if os.path.isfile(candidate):
             os.environ["LD_LIBRARY_PATH"] = native_dir + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
@@ -411,6 +416,7 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None):
     executable = _ffmpeg_path()
     if not executable:
         raise DownloadError("FFmpeg is not executable on this device. " + ffmpeg_diagnostic())
+    log(ffmpeg_diagnostic())
 
     attempts = (None, ["web_embedded"], ["mweb"]) if platform_name == "youtube" else (None,)
     last_error = None
