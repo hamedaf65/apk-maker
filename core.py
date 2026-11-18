@@ -300,7 +300,9 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
     if not _ffmpeg_path():
         raise DownloadError("FFmpeg is not available in this build; YouTube video/audio merging cannot run.")
 
-    client_attempts = (["web_safari"], ["web_embedded"])
+    # Start with yt-dlp's maintained default client set. Forcing a single
+    # client can return no formats on current YouTube deployments.
+    client_attempts = (None, ["web_embedded"], ["mweb"])
     last_error = None
     for player_clients in client_attempts:
         options = {
@@ -311,12 +313,14 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
             "retries": 3,
             "fragment_retries": 3,
             "socket_timeout": 30,
-            "extractor_args": {"youtube": {"player_client": player_clients}},
         }
+        if player_clients:
+            options["extractor_args"] = {"youtube": {"player_client": player_clients}}
         if cookies_file and os.path.isfile(cookies_file):
             options["cookiefile"] = cookies_file
 
-        log("YouTube: trying player " + ", ".join(player_clients) + ".")
+        label = "yt-dlp defaults" if not player_clients else ", ".join(player_clients)
+        log("YouTube: trying player set " + label + ".")
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
                 info = downloader.extract_info(url, download=False)
@@ -366,7 +370,7 @@ def download_youtube(url, root, cookies_file, log, on_progress=None):
             return destination
         except Exception as exc:
             last_error = exc
-            log("YouTube player " + ",".join(player_clients) + " failed: " + repr(exc))
+            log("YouTube player set " + label + " failed: " + repr(exc))
             continue
 
     raise DownloadError(str(last_error or "No YouTube player could provide a downloadable video."))
