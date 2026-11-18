@@ -320,7 +320,7 @@ class Root(BoxLayout):
         if self.status_popup:
             self.status_popup.dismiss()
         panel = BoxLayout(orientation="vertical", padding=18, spacing=12)
-        self.status_ring = StatusRing(size_hint=(None, None), size=(dp(106), dp(106)))
+        self.status_ring = StatusRing(size_hint=(1, None), height=dp(106))
         title = Label(text="Downloading...", font_name=FONT, font_size="19sp",
                       color=(0.10, 0.09, 0.24, 1), size_hint_y=None, height=34)
         self.status_title = title
