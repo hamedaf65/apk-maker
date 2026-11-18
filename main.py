@@ -7,6 +7,11 @@ import webbrowser
 import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.app import App
+from kivy.animation import Animation
+from kivy.graphics import Color, Line, RoundedRectangle
+from kivy.metrics import dp
+from kivy.properties import NumericProperty, StringProperty
+from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
@@ -60,8 +65,74 @@ def open_url(url):
         webbrowser.open(url)
 
 
+class RoundedButton(Button):
+    def __init__(self, text="", fill=(0.39, 0.16, 0.90, 1), **kw):
+        self.fill = fill
+        kw.setdefault("background_normal", "")
+        kw.setdefault("background_down", "")
+        kw.setdefault("background_color", (0, 0, 0, 0))
+        kw.setdefault("color", (1, 1, 1, 1))
+        kw.setdefault("font_size", "15sp")
+        super().__init__(text=text, font_name=FONT, **kw)
+        with self.canvas.before:
+            self._fill_color = Color(*self.fill)
+            self._rounded = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+        self.bind(pos=self._sync_shape, size=self._sync_shape, disabled=self._sync_fill)
+
+    def _sync_shape(self, *_):
+        self._rounded.pos = self.pos
+        self._rounded.size = self.size
+
+    def _sync_fill(self, *_):
+        self._fill_color.rgba = (0.72, 0.70, 0.79, 1) if self.disabled else self.fill
+
+    def set_fill(self, value):
+        self.fill = value
+        self._sync_fill()
+
+
+class StatusRing(Widget):
+    angle = NumericProperty(0)
+    state = StringProperty("loading")
+
+    def __init__(self, **kw):
+        self.on_finished = None
+        super().__init__(**kw)
+        self.bind(pos=self.redraw, size=self.redraw, angle=self.redraw, state=self.redraw)
+        self.redraw()
+
+    def redraw(self, *_):
+        self.canvas.clear()
+        radius = min(self.width, self.height) * 0.40
+        cx, cy = self.center
+        with self.canvas:
+            Color(0.86, 0.83, 0.95, 1)
+            Line(circle=(cx, cy, radius), width=dp(3))
+            if self.state == "loading":
+                Color(0.40, 0.18, 0.91, 1)
+                Line(circle=(cx, cy, radius, self.angle, self.angle + 255), width=dp(5), cap="round")
+            elif self.state == "success":
+                Color(0.08, 0.66, 0.34, 1)
+                Line(points=[cx-radius*0.48, cy, cx-radius*0.10, cy-radius*0.35,
+                             cx+radius*0.52, cy+radius*0.38], width=dp(6), cap="round", joint="round")
+            else:
+                Color(0.84, 0.15, 0.20, 1)
+                Line(points=[cx-radius*0.38, cy-radius*0.38, cx+radius*0.38, cy+radius*0.38],
+                     width=dp(6), cap="round")
+                Line(points=[cx-radius*0.38, cy+radius*0.38, cx+radius*0.38, cy-radius*0.38],
+                     width=dp(6), cap="round")
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos) and self.state != "loading":
+            if self.on_finished:
+                self.on_finished()
+            return True
+        return super().on_touch_down(touch)
+
+
 def button(text, **kw):
-    return Button(text=fa(text), font_name=FONT, **kw)
+    value = fa(text) if any("\\u0600" <= ch <= "\\u06ff" for ch in text) else text
+    return RoundedButton(text=value, font_name=FONT, **kw)
 
 
 def label(text, height=36, halign="right", **kw):
@@ -75,8 +146,15 @@ class Root(BoxLayout):
         super().__init__(orientation="vertical", padding=10, spacing=6, **kw)
         self.user_dir = user_dir
         self.cookies_path = os.path.join(user_dir, "ig_cookies.txt")
+        self.log_path = os.path.join(user_dir, "downloader-internal.log")
+        self.download_root = BASE
         self.busy = False
         self.wv = None
+        self.status_popup = None
+        self.status_ring = None
+        self.status_title = None
+        self.status_detail = None
+        self.spin_animation = None
 
         # ---- header: "سازنده: حامد افشاری" (the name is a link to the About tab)
         self.header = Label(
@@ -116,20 +194,30 @@ class Root(BoxLayout):
         self.btn.bind(on_release=lambda *_: self.start())
         box.add_widget(self.btn)
 
-        self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=14)
+        self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=1, opacity=0)
         box.add_widget(self.bar)
 
-        self.login_btn = button("ورود به اینستاگرام (فقط برای پیج‌های خصوصی)", size_hint_y=None, height=44)
+        connect_row = BoxLayout(size_hint_y=None, height=52, spacing=8)
+        self.login_btn = button("Connect to Instagram", fill=(0.93, 0.88, 1, 1),
+                                color=(0.12, 0.10, 0.28, 1))
         self.login_btn.bind(on_release=lambda *_: self.instagram_login())
-        box.add_widget(self.login_btn)
+        self.youtube_btn = button("Connect to YouTube", fill=(1, 0.89, 0.92, 1),
+                                  color=(0.12, 0.10, 0.28, 1))
+        self.youtube_btn.bind(on_release=lambda *_: self.youtube_connect_info())
+        connect_row.add_widget(self.login_btn)
+        connect_row.add_widget(self.youtube_btn)
+        box.add_widget(connect_row)
 
-        self.logview = Label(text="", size_hint_y=None, halign="left", valign="top", font_name=FONT)
-        self.logview.bind(width=lambda *_: setattr(self.logview, "text_size", (self.logview.width, None)))
-        self.logview.bind(texture_size=lambda *_: setattr(self.logview, "height", self.logview.texture_size[1]))
-        sv = ScrollView()
-        sv.add_widget(self.logview)
-        box.add_widget(sv)
-        self.log(fa("ذخیره در: Download/SocialDownloader"))
+        self.files_btn = button("Downloaded Files", fill=(0.91, 0.87, 1, 1),
+                                color=(0.12, 0.10, 0.28, 1),
+                                size_hint_y=None, height=52)
+        self.files_btn.bind(on_release=lambda *_: self.show_downloads())
+        box.add_widget(self.files_btn)
+        box.add_widget(label("Developed by Hamed AI", height=32, halign="center"))
+        contact = button("Contact Us", fill=(1, 1, 1, 1), color=(0.39, 0.16, 0.90, 1),
+                         size_hint_y=None, height=42)
+        contact.bind(on_release=lambda *_: open_url(TELEGRAM_URL))
+        box.add_widget(contact)
         return box
 
     def build_about(self):
@@ -148,7 +236,15 @@ class Root(BoxLayout):
 
     # ----------------------------------------------------------- helpers
     def log(self, msg):
-        Clock.schedule_once(lambda dt: setattr(self.logview, "text", (self.logview.text + "\n" + str(msg)).strip()))
+        # Technical reports stay in app-private storage; never put them on screen.
+        try:
+            os.makedirs(self.user_dir, exist_ok=True)
+            if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 512 * 1024:
+                os.remove(self.log_path)
+            with open(self.log_path, "a", encoding="utf-8") as handle:
+                handle.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)[:1200] + "\n")
+        except Exception:
+            pass
 
     def progress(self, v):
         Clock.schedule_once(lambda dt: setattr(self.bar, "value", v))
@@ -185,30 +281,134 @@ class Root(BoxLayout):
             self.log(fa("اجازه ذخیره در Download داده نشد. محل ذخیره:") + " " + root)
         self.busy = True
         self.btn.disabled = True
+        self.download_root = root
+        self.show_processing()
         threading.Thread(target=self.work, args=(urls, root), daemon=True).start()
 
     def work(self, urls, root):
-        has_cookies = os.path.exists(self.cookies_path)
-        for i, u in enumerate(urls, 1):
-            self.log("--- (%d/%d)" % (i, len(urls)))
-            self.progress(0)
+        successes, failures = [], []
+        total = len(urls)
+        for index, url in enumerate(urls, 1):
+            self.log("Starting: " + url)
             try:
+                cookies = self.cookies_path if ("instagram.com" in url.lower() and os.path.exists(self.cookies_path)) else None
+                def on_progress(value, current=index):
+                    overall = ((current - 1) + max(0, min(100, float(value))) / 100.0) * 100.0 / total
+                    self.progress(overall)
+                destination = core.run(url, root, cookies, self.log, on_progress)
+                if not destination or not os.path.isdir(destination):
+                    raise RuntimeError("Downloader returned no saved folder.")
+                successes.append(destination)
+                self.log("Completed: " + destination)
+            except Exception as exc:
+                self.log("Failure: " + repr(exc))
                 try:
-                    core.run(u, root, None, self.log, self.progress)          # public post: no login
-                except core.NeedLogin:
-                    if has_cookies:
-                        self.log(fa("در حال تلاش با حساب اینستاگرام شما ..."))
-                        core.run(u, root, self.cookies_path, self.log, self.progress)
-                    else:
-                        raise
-                self.log(fa("✔ دانلود تمام شد."))
-            except core.NeedLogin:
-                self.log(fa("این پست خصوصی است یا اینستاگرام ورود می‌خواهد."))
-                self.log(fa("دکمه «ورود به اینستاگرام» را بزنید و یک بار وارد شوید."))
-            except Exception as e:
-                self.log(fa("خطا:") + " %s" % e)
-        self.progress(100)
-        Clock.schedule_once(lambda dt: (setattr(self, "busy", False), setattr(self.btn, "disabled", False)))
+                    failures.append(core.friendly_error(url, exc))
+                except Exception:
+                    failures.append("Download failed. Check the link and try again.")
+            self.progress(index * 100.0 / total)
+        Clock.schedule_once(lambda dt: self.finish_download(successes, failures))
+
+    def show_processing(self):
+        if self.status_popup:
+            self.status_popup.dismiss()
+        panel = BoxLayout(orientation="vertical", padding=18, spacing=12)
+        self.status_ring = StatusRing(size_hint=(None, None), size=(dp(106), dp(106)))
+        title = Label(text="Downloading...", font_name=FONT, font_size="19sp",
+                      color=(0.10, 0.09, 0.24, 1), size_hint_y=None, height=34)
+        self.status_title = title
+        self.status_detail = label("در حال دریافت محتوا؛ لطفاً برنامه را نبندید",
+                                   height=52, halign="center", color=(0.38, 0.37, 0.51, 1))
+        panel.add_widget(self.status_ring)
+        panel.add_widget(title)
+        panel.add_widget(self.status_detail)
+        self.status_popup = Popup(title="", content=panel, size_hint=(0.84, None),
+                                  height=dp(280), auto_dismiss=False,
+                                  separator_height=0, background_color=(1, 1, 1, 1))
+        self.status_ring.on_finished = self.dismiss_status
+        self.status_popup.open()
+        self.spin_animation = Animation(angle=360, duration=1.05)
+        self.spin_animation.bind(on_complete=self._repeat_spin)
+        self.spin_animation.start(self.status_ring)
+
+    def _repeat_spin(self, _animation, ring):
+        if ring.state == "loading":
+            ring.angle = 0
+            self.spin_animation.start(ring)
+
+    def finish_download(self, successes, failures):
+        self.busy = False
+        self.btn.disabled = False
+        if self.spin_animation:
+            self.spin_animation.cancel(self.status_ring)
+            self.spin_animation = None
+        if successes:
+            self.status_ring.state = "success"
+            self.status_title.text = "Download completed"
+            if failures:
+                self.status_detail.text = fa(str(len(successes)) + " مورد ذخیره شد؛ " + str(len(failures)) + " مورد ناموفق بود.")
+            else:
+                self.status_detail.text = fa(str(len(successes)) + " مورد با موفقیت ذخیره شد.")
+            self.files_btn.text = "★   Open Downloaded Files"
+            self.files_btn.set_fill((0.83, 0.97, 0.87, 1))
+        else:
+            self.status_ring.state = "error"
+            self.status_title.text = "Download failed"
+            self.status_detail.text = failures[0] if failures else fa("دانلود انجام نشد؛ لینک را بررسی کنید.")
+        self.status_ring.redraw()
+
+    def dismiss_status(self):
+        if self.status_popup:
+            self.status_popup.dismiss()
+            self.status_popup = None
+
+    def youtube_connect_info(self):
+        message = ("Public YouTube videos can be downloaded without connecting an account. "
+                   "Google blocks sign-in inside embedded Android WebViews, so this app cannot "
+                   "safely reuse your Google account session. Private, members-only or age-verified "
+                   "videos may not be supported.")
+        body = BoxLayout(orientation="vertical", padding=14, spacing=10)
+        body.add_widget(Label(text=message, font_name=FONT, color=(0.12, 0.10, 0.28, 1),
+                              halign="center", valign="middle"))
+        open_btn = button("Open YouTube", size_hint_y=None, height=44, fill=(0.88, 0.10, 0.16, 1))
+        close_btn = button("Close", size_hint_y=None, height=44,
+                           fill=(0.91, 0.87, 1, 1), color=(0.12, 0.10, 0.28, 1))
+        body.add_widget(open_btn)
+        body.add_widget(close_btn)
+        popup = Popup(title="YouTube connection", content=body, size_hint=(0.88, None),
+                      height=dp(300), auto_dismiss=False)
+        open_btn.bind(on_release=lambda *_: (popup.dismiss(), open_url("https://www.youtube.com")))
+        close_btn.bind(on_release=popup.dismiss)
+        popup.open()
+
+    def show_downloads(self):
+        root = self.download_root
+        os.makedirs(root, exist_ok=True)
+        items = []
+        for current, _dirs, names in os.walk(root):
+            for name in names:
+                if name.startswith(".") or name.endswith(".json"):
+                    continue
+                path = os.path.join(current, name)
+                if os.path.isfile(path):
+                    items.append(path)
+        items.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+        text = "\n".join(os.path.basename(path) for path in items) or "No downloaded files yet"
+        panel = BoxLayout(orientation="vertical", padding=12, spacing=8)
+        scroll = ScrollView()
+        listing = Label(text=text, font_name=FONT, color=(0.12, 0.10, 0.28, 1),
+                        halign="left", valign="top", size_hint_y=None)
+        listing.bind(width=lambda *_: setattr(listing, "text_size", (listing.width, None)))
+        listing.bind(texture_size=lambda *_: setattr(listing, "height", listing.texture_size[1]))
+        scroll.add_widget(listing)
+        panel.add_widget(scroll)
+        panel.add_widget(label("Download/SocialDownloader", height=26, halign="center"))
+        close = button("Close", size_hint_y=None, height=44)
+        panel.add_widget(close)
+        popup = Popup(title="Downloaded Files (" + str(len(items)) + ")", content=panel,
+                      size_hint=(0.90, 0.78), auto_dismiss=False)
+        close.bind(on_release=popup.dismiss)
+        popup.open()
 
     # ------------------------------------------ Instagram login (private)
     def instagram_login(self):
