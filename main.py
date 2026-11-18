@@ -23,6 +23,8 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+from kivy.uix.behaviors import ButtonBehavior
+from kivy.graphics import Ellipse, Rectangle
 from kivy.utils import platform
 
 import core
@@ -137,14 +139,72 @@ def button(text, **kw):
 
 
 def label(text, height=36, halign="right", **kw):
-    lb = Label(text=fa(text), font_name=FONT, size_hint_y=None, height=height, halign=halign, **kw)
-    lb.bind(size=lambda w, s: setattr(w, "text_size", (s[0], None)))
+    value = fa(text) if any("\u0600" <= ch <= "\u06ff" for ch in text) else text
+    lb = Label(text=value, font_name=FONT, size_hint_y=None, height=height, halign=halign, **kw)
+    lb.bind(size=lambda w, size: setattr(w, "text_size", (size[0], None)))
     return lb
+
+
+class SoftCard(BoxLayout):
+    def __init__(self, fill=(1, 1, 1, 0.94), radius=dp(22), **kw):
+        super().__init__(**kw)
+        self.fill = fill
+        self.corner_radius = radius
+        with self.canvas.before:
+            self._card_color = Color(*self.fill)
+            self._card_rect = RoundedRectangle(pos=self.pos, size=self.size,
+                                                radius=[self.corner_radius])
+            self._border_color = Color(0.78, 0.70, 0.98, 0.72)
+            self._border = Line(rounded_rectangle=(self.x, self.y, self.width,
+                                                   self.height, self.corner_radius), width=1.1)
+        self.bind(pos=self._sync_card, size=self._sync_card)
+
+    def _sync_card(self, *_):
+        self._card_rect.pos = self.pos
+        self._card_rect.size = self.size
+        self._border.rounded_rectangle = (self.x, self.y, self.width, self.height, self.corner_radius)
+
+
+class ContactAction(ButtonBehavior, BoxLayout):
+    def __init__(self, icon, icon_color, title, subtitle, url, **kw):
+        super().__init__(orientation="horizontal", padding=(dp(16), dp(10)),
+                         spacing=dp(14), size_hint_y=None, height=dp(92), **kw)
+        with self.canvas.before:
+            Color(1, 1, 1, 0.97)
+            self._card = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(20)])
+            Color(0.79, 0.71, 0.98, 0.8)
+            self._outline = Line(rounded_rectangle=(self.x, self.y, self.width,
+                                                    self.height, dp(20)), width=1.1)
+        self.bind(pos=self._sync, size=self._sync)
+        icon_box = BoxLayout(size_hint=(None, 1), width=dp(62), padding=dp(4))
+        with icon_box.canvas.before:
+            Color(*icon_color)
+            self._icon_bg = Ellipse(pos=icon_box.pos, size=icon_box.size)
+        icon_box.bind(pos=lambda w, *_: setattr(self._icon_bg, "pos", w.pos),
+                      size=lambda w, *_: setattr(self._icon_bg, "size", w.size))
+        icon_label = Label(text=icon, font_size="32sp", bold=True,
+                           color=(1, 1, 1, 1), halign="center", valign="middle")
+        icon_box.add_widget(icon_label)
+        self.add_widget(icon_box)
+
+        texts = BoxLayout(orientation="vertical", spacing=dp(3), padding=(0, dp(5)))
+        texts.add_widget(label(title, height=dp(30), halign="left",
+                               font_size="17sp", bold=True, color=(0.10, 0.10, 0.27, 1)))
+        texts.add_widget(label(subtitle, height=dp(30), halign="left",
+                               font_size="13sp", color=(0.40, 0.39, 0.52, 1)))
+        self.add_widget(texts)
+        self.url = url
+        self.bind(on_release=lambda *_: open_url(self.url))
+
+    def _sync(self, *_):
+        self._card.pos = self.pos
+        self._card.size = self.size
+        self._outline.rounded_rectangle = (self.x, self.y, self.width, self.height, dp(20))
 
 
 class Root(BoxLayout):
     def __init__(self, user_dir, **kw):
-        super().__init__(orientation="vertical", padding=10, spacing=6, **kw)
+        super().__init__(orientation="vertical", padding=0, spacing=0, **kw)
         self.user_dir = user_dir
         self.cookies_path = os.path.join(user_dir, "ig_cookies.txt")
         self.log_path = os.path.join(user_dir, "downloader-internal.log")
@@ -156,90 +216,156 @@ class Root(BoxLayout):
         self.status_title = None
         self.status_detail = None
         self.spin_animation = None
+        self.current_view = None
+        Window.clearcolor = (0.975, 0.965, 1, 1)
+        with self.canvas.before:
+            Color(0.975, 0.965, 1, 1)
+            self._background = Rectangle(pos=self.pos, size=self.size)
+            Color(0.88, 0.79, 1, 0.30)
+            self._blob_top = Ellipse()
+            Color(1, 0.77, 0.70, 0.22)
+            self._blob_bottom = Ellipse()
+        self.bind(pos=self._sync_background, size=self._sync_background)
+        self.main_view = self.build_download()
+        self.contact_view = self.build_contact()
+        self.show_main()
 
-        # ---- header: "سازنده: حامد افشاری" (the name is a link to the About tab)
-        self.header = Label(
-            text="[ref=about][color=4da6ff][u]%s[/u][/color][/ref]  %s" % (fa("حامد افشاری"), fa("سازنده:")),
-            markup=True, font_name=FONT, size_hint_y=None, height=40, halign="right", font_size="16sp")
-        self.header.bind(size=lambda w, s: setattr(w, "text_size", (s[0], None)))
-        self.header.bind(on_ref_press=lambda *_: self.tabs.switch_to(self.about_tab))
-        self.add_widget(self.header)
+    def _sync_background(self, *_):
+        self._background.pos = self.pos
+        self._background.size = self.size
+        self._blob_top.pos = (self.x - dp(90), self.top - dp(230))
+        self._blob_top.size = (self.width * 0.78, dp(300))
+        self._blob_bottom.pos = (self.right - self.width * 0.55, self.y - dp(160))
+        self._blob_bottom.size = (self.width * 0.75, dp(260))
 
-        self.tabs = TabbedPanel(do_default_tab=False, tab_width=170)
-        self.dl_tab = TabbedPanelItem(text=fa("دانلود"), font_name=FONT)
-        self.about_tab = TabbedPanelItem(text=fa("درباره ما"), font_name=FONT)
-        self.dl_tab.add_widget(self.build_download())
-        self.about_tab.add_widget(self.build_about())
-        self.tabs.add_widget(self.dl_tab)
-        self.tabs.add_widget(self.about_tab)
-        self.tabs.switch_to(self.dl_tab)
-        self.add_widget(self.tabs)
+    def show_main(self):
+        if self.current_view is not None:
+            self.remove_widget(self.current_view)
+        self.current_view = self.main_view
+        self.add_widget(self.main_view)
 
-    # ------------------------------------------------------------ tabs
+    def show_contact(self):
+        if self.current_view is not None:
+            self.remove_widget(self.current_view)
+        self.current_view = self.contact_view
+        self.add_widget(self.contact_view)
+
+    def _make_scroll_page(self, padding=(dp(18), dp(12))):
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(3),
+                            scroll_type=["bars", "content"])
+        content = BoxLayout(orientation="vertical", padding=padding,
+                            spacing=dp(12), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
+        scroll.add_widget(content)
+        return scroll, content
+
+    # ------------------------------------------------------------ pages
     def build_download(self):
-        box = BoxLayout(orientation="vertical", padding=6, spacing=8)
-        box.add_widget(label("◎   ▶   ↓", height=82, halign="center", font_size="46sp",
-                             color=(0.43, 0.16, 0.88, 1)))
-        box.add_widget(label("ClipDrop", height=46, halign="center", font_size="30sp",
-                             color=(0.10, 0.09, 0.25, 1)))
-        box.add_widget(label("دانلود محتوا از اینستاگرام و یوتیوب؛ کافیه لینک رو اینجا بفرستی",
-                             height=48, halign="center", font_size="14sp"))
-        box.add_widget(label("آدرس لینک پست مورد نظر خود را اینجا قرار دهید:"))
-        self.url = TextInput(multiline=True, size_hint_y=None, height=100)
-        box.add_widget(self.url)
+        scroll, content = self._make_scroll_page()
+        hero = BoxLayout(orientation="vertical", spacing=dp(2),
+                         size_hint_y=None, height=dp(166))
+        brand_mark = Label(text="◎   ▶   ⇩", font_name=FONT, font_size="50sp",
+                           bold=True, color=(0.49, 0.16, 0.91, 1),
+                           size_hint_y=None, height=dp(88))
+        brand = Label(text="[color=151A3D][b]Clip[/b][/color][color=8A27DD][b]Drop[/b][/color]",
+                      markup=True, font_name=FONT, font_size="32sp",
+                      size_hint_y=None, height=dp(42))
+        tagline = label("دانلود محتوای اینستاگرام و یوتیوب؛ فقط لینک را اینجا قرار بده",
+                        height=dp(32), halign="center", font_size="13sp",
+                        color=(0.34, 0.33, 0.49, 1))
+        hero.add_widget(brand_mark)
+        hero.add_widget(brand)
+        hero.add_widget(tagline)
+        content.add_widget(hero)
 
-        row = BoxLayout(size_hint_y=None, height=48, spacing=8)
-        b1 = button("چسباندن")
-        b1.bind(on_release=lambda *_: self.paste())
-        b2 = button("پاک کردن")
-        b2.bind(on_release=lambda *_: setattr(self.url, "text", ""))
-        row.add_widget(b1)
-        row.add_widget(b2)
-        box.add_widget(row)
+        input_card = SoftCard(orientation="vertical", padding=(dp(15), dp(13)),
+                              spacing=dp(8), size_hint_y=None, height=dp(190))
+        input_card.add_widget(label("آدرس لینک پست مورد نظر خود را از اینستاگرام یا یوتیوب اینجا قرار دهید:",
+                                    height=dp(44), font_size="13sp", color=(0.13, 0.13, 0.31, 1)))
+        self.url = TextInput(
+            multiline=False, size_hint_y=None, height=dp(68),
+            hint_text="Paste your link here...",
+            background_normal="", background_active="",
+            background_color=(0.98, 0.97, 1, 1),
+            foreground_color=(0.13, 0.13, 0.29, 1),
+            hint_text_color=(0.55, 0.53, 0.66, 1),
+            cursor_color=(0.48, 0.19, 0.91, 1),
+            padding=(dp(14), dp(20)), font_size="15sp",
+            selection_color=(0.72, 0.62, 0.98, 0.55))
+        input_card.add_widget(self.url)
+        tools_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        clear_button = button("Delete", fill=(0.94, 0.91, 1, 1),
+                              color=(0.17, 0.14, 0.36, 1), size_hint_x=1)
+        clear_button.bind(on_release=lambda *_: setattr(self.url, "text", ""))
+        paste_button = button("Paste", fill=(0.94, 0.91, 1, 1),
+                              color=(0.17, 0.14, 0.36, 1), size_hint_x=1)
+        paste_button.bind(on_release=lambda *_: self.paste())
+        tools_row.add_widget(clear_button)
+        tools_row.add_widget(paste_button)
+        input_card.add_widget(tools_row)
+        content.add_widget(input_card)
 
-        self.btn = button("دانلود", size_hint_y=None, height=60, font_size="20sp")
+        self.btn = button("↓   Download Content", size_hint_y=None, height=dp(60),
+                          font_size="19sp", bold=True, fill=(0.56, 0.18, 0.92, 1))
         self.btn.bind(on_release=lambda *_: self.start())
-        box.add_widget(self.btn)
+        content.add_widget(self.btn)
 
         self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=1, opacity=0)
-        box.add_widget(self.bar)
+        content.add_widget(self.bar)
 
-        connect_row = BoxLayout(size_hint_y=None, height=52, spacing=8)
-        self.login_btn = button("Connect to Instagram", fill=(0.93, 0.88, 1, 1),
-                                color=(0.12, 0.10, 0.28, 1))
+        connect_row = BoxLayout(size_hint_y=None, height=dp(68), spacing=dp(9))
+        self.login_btn = button("◎   Connect to Instagram", fill=(0.94, 0.89, 1, 1),
+                                color=(0.15, 0.12, 0.34, 1), font_size="13sp")
         self.login_btn.bind(on_release=lambda *_: self.instagram_login())
-        self.youtube_btn = button("Connect to YouTube", fill=(1, 0.89, 0.92, 1),
-                                  color=(0.12, 0.10, 0.28, 1))
+        self.youtube_btn = button("▶   Connect to YouTube", fill=(1, 0.90, 0.93, 1),
+                                  color=(0.15, 0.12, 0.34, 1), font_size="13sp")
         self.youtube_btn.bind(on_release=lambda *_: self.youtube_connect_info())
         connect_row.add_widget(self.login_btn)
         connect_row.add_widget(self.youtube_btn)
-        box.add_widget(connect_row)
+        content.add_widget(connect_row)
 
-        self.files_btn = button("Downloaded Files", fill=(0.91, 0.87, 1, 1),
-                                color=(0.12, 0.10, 0.28, 1),
-                                size_hint_y=None, height=52)
+        self.files_btn = button("▣   Downloaded Files", fill=(0.93, 0.89, 1, 1),
+                                color=(0.15, 0.12, 0.34, 1),
+                                size_hint_y=None, height=dp(58), font_size="16sp")
         self.files_btn.bind(on_release=lambda *_: self.show_downloads())
-        box.add_widget(self.files_btn)
-        box.add_widget(label("Developed by Hamed AI", height=32, halign="center"))
-        contact = button("Contact Us", fill=(1, 1, 1, 1), color=(0.39, 0.16, 0.90, 1),
-                         size_hint_y=None, height=42)
-        contact.bind(on_release=lambda *_: open_url(TELEGRAM_URL))
-        box.add_widget(contact)
-        return box
+        content.add_widget(self.files_btn)
 
-    def build_about(self):
-        box = BoxLayout(orientation="vertical", padding=16, spacing=14)
-        box.add_widget(label("دانلودر اینستاگرام و یوتیوب", height=44, font_size="20sp", halign="center"))
-        box.add_widget(label("سازنده: حامد افشاری", halign="center"))
-        box.add_widget(label("ارتباط با ما:", halign="center"))
+        credit = Label(text="[color=47425F]Developed by [/color][color=7521D6][b]Hamed AI[/b][/color]",
+                       markup=True, font_name=FONT, size_hint_y=None, height=dp(34),
+                       font_size="14sp")
+        content.add_widget(credit)
+        contact = button("Contact Us", fill=(1, 1, 1, 1),
+                         color=(0.42, 0.15, 0.82, 1),
+                         size_hint_y=None, height=dp(44), font_size="15sp")
+        contact.bind(on_release=lambda *_: self.show_contact())
+        content.add_widget(contact)
+        content.add_widget(Widget(size_hint_y=None, height=dp(8)))
+        return scroll
 
-        for text, url in (("کانال تلگرام", TELEGRAM_URL), ("صفحه اینستاگرام", INSTAGRAM_URL)):
-            lb = Label(text="[ref=x][color=4da6ff][u]%s[/u][/color][/ref]" % fa(text), markup=True,
-                       font_name=FONT, size_hint_y=None, height=48, font_size="18sp")
-            lb.bind(on_ref_press=lambda inst, ref, u=url: open_url(u))
-            box.add_widget(lb)
-        box.add_widget(Label())  # spacer
-        return box
+    def build_contact(self):
+        scroll, content = self._make_scroll_page(padding=(dp(18), dp(18)))
+        back = button("←   Back", fill=(0.94, 0.91, 1, 1),
+                      color=(0.18, 0.14, 0.38, 1),
+                      size_hint_y=None, height=dp(48), size_hint_x=0.42)
+        back.bind(on_release=lambda *_: self.show_main())
+        content.add_widget(back)
+        content.add_widget(label("Contact Us", height=dp(54), halign="center",
+                                 font_size="27sp", color=(0.13, 0.12, 0.31, 1)))
+        content.add_widget(label("برای ارتباط، از راه‌های زیر با من در تماس باشید",
+                                 height=dp(46), halign="center", font_size="14sp",
+                                 color=(0.36, 0.34, 0.51, 1)))
+        telegram = ContactAction("➤", (0.13, 0.62, 0.88, 1),
+                                 "Telegram Channel", "برای ارتباط از طریق تلگرام",
+                                 TELEGRAM_URL)
+        instagram = ContactAction("◎", (0.79, 0.20, 0.66, 1),
+                                  "Instagram Page", "برای مشاهده صفحه اینستاگرام",
+                                  "https://www.instagram.com/hamedafshar.ir/")
+        content.add_widget(telegram)
+        content.add_widget(instagram)
+        content.add_widget(Widget(size_hint_y=None, height=dp(18)))
+        content.add_widget(label("Developed by Hamed AI", height=dp(34),
+                                 halign="center", color=(0.48, 0.23, 0.80, 1)))
+        return scroll
 
     # ----------------------------------------------------------- helpers
     def log(self, msg):
@@ -263,9 +389,9 @@ class Root(BoxLayout):
             pass
 
     def receive_shared(self, text):
-        """Link shared from the Instagram / YouTube app into this app."""
+        """Link shared from Instagram or YouTube into ClipDrop."""
+        self.show_main()
         self.url.text = text
-        self.tabs.switch_to(self.dl_tab)
         self.start()
 
     # ---------------------------------------------------------- download
@@ -476,17 +602,20 @@ class Root(BoxLayout):
         return True
 
     def on_back(self):
-        """Android back button: close login window if open."""
+        """Android back button: close login view or return from Contact Us."""
         if self.wv is not None:
             self._close_webview()
             self.log(fa("ورود لغو شد."))
+            return True
+        if self.current_view is self.contact_view:
+            self.show_main()
             return True
         return False
 
 
 class SocialDownloaderApp(App):
     def build(self):
-        self.title = "Social Downloader"
+        self.title = "ClipDrop"
         self.root_widget = Root(self.user_data_dir)
         Window.bind(on_keyboard=self.on_key)
         return self.root_widget
