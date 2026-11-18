@@ -672,9 +672,6 @@ class Root(BoxLayout):
             return False
         try:
             Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
-            if not Storage.isInstagramLoginVisible():
-                self.login_open = False
-                return False
             raw = str(Storage.getInstagramCookies() or "")
         except Exception:
             return True
@@ -694,6 +691,12 @@ class Root(BoxLayout):
             self._close_webview()
             self.log(fa("✔ ورود انجام شد. به SociaSave برگشتید؛ لینک را دانلود کنید."))
             return False
+        try:
+            if not Storage.isInstagramLoginVisible():
+                self.login_open = False
+                return False
+        except Exception:
+            pass
         return True
 
     def on_back(self):
