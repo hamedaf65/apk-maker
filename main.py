@@ -48,9 +48,9 @@ if platform == "android":
     from android.runnable import run_on_ui_thread
     from jnius import autoclass
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
-    BASE = "/storage/emulated/0/Download/SocialDownloader"
+    BASE = "/storage/emulated/0/Download/SociaSave"
 else:
-    BASE = os.path.join(os.path.expanduser("~"), "SocialDownloader")
+    BASE = os.path.join(os.path.expanduser("~"), "SociaSave")
 
     def run_on_ui_thread(f):
         return f
@@ -462,7 +462,7 @@ class Root(BoxLayout):
             pass
 
     def receive_shared(self, text):
-        """Link shared from Instagram or YouTube into ClipDrop."""
+        """Link shared from a supported platform into SociaSave."""
         self.show_main()
         self.url.text = text
         self.start()
