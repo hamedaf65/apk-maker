@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import requests
 
@@ -21,12 +21,12 @@ USER_AGENT = (
 )
 PIN_ID_RE = re.compile(r"/pin/(?:[^/]*?--)?(\d{6,})", re.I)
 VIDEO_RE = re.compile(
-    r"https?://[^\\s\"'<>\\\\]+?\\.(?:mp4|m3u8)(?:\\?[^\\s\"'<>\\\\]*)?",
+    r"https?://[^\s"'<>\\]+?\.(?:mp4|m3u8)(?:\?[^\s"'<>\\]*)?",
     re.I,
 )
 IMAGE_RE = re.compile(
     r"https?://i\\.pinimg\\.com/(?:originals|\\d+x\\d+(?:_RS)?)/"
-    r"[A-Za-z0-9_./-]+?\\.(?:jpe?g|png|webp|gif)(?:\\?[^\\s\"'<>\\\\]*)?",
+    r"[A-Za-z0-9_./-]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>\\]*)?",
     re.I,
 )
 
@@ -89,7 +89,7 @@ def extract_page_data(page, source_url):
     urls, texts = [], []
 
     # Parse JSON-LD and Pinterest's server-rendered state script payloads.
-    for match in re.finditer(r"<script\\b[^>]*>(.*?)</script\\s*>", page, re.I | re.S):
+    for match in re.finditer(r"<script\b[^>]*>(.*?)</script\s*>", page, re.I | re.S):
         raw = html.unescape(match.group(1)).strip()
         if not raw or len(raw) < 2:
             continue
