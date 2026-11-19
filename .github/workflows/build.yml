@@ -81,6 +81,9 @@ jobs:
               "https://x.com/example/status/123456": "twitter",
               "https://www.facebook.com/watch/?v=123": "facebook",
               "https://fb.watch/abc123/": "facebook",
+              "https://www.tiktok.com/@sample/video/123456": "tiktok",
+              "https://www.pinterest.com/pin/123456/": "pinterest",
+              "https://www.threads.net/@sample/post/123456": "threads",
           }
           for url, expected in cases.items():
               actual = core.detect_platform(url)
