@@ -314,8 +314,10 @@ class Root(BoxLayout):
             try:
                 native_dir = str(PythonActivity.mActivity.getApplicationInfo().nativeLibraryDir)
                 os.environ["SOCIASAVE_NATIVE_LIB_DIR"] = native_dir
-            except Exception:
-                pass
+                Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+                Storage.ensureSociaSaveFolder(PythonActivity.mActivity)
+            except Exception as exc:
+                self.log("Could not initialize public SociaSave folder: " + repr(exc))
         self.main_view = self.build_download()
         self.contact_view = self.build_contact()
         self.show_main()
