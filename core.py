@@ -338,6 +338,20 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
             if cookies_file and os.path.isfile(cookies_file):
                 config.set(("extractor", "instagram"), "cookies", cookies_file)
                 log("Instagram: using saved app-private session cookies.")
+        elif platform_name == "facebook":
+            config.set(("extractor", "facebook"), "videos", True)
+            config.set(("extractor", "facebook"), "include", "photos")
+            if cookies_file and os.path.isfile(cookies_file):
+                config.set(("extractor", "facebook"), "cookies", cookies_file)
+                log("Facebook: using saved app-private session cookies.")
+        elif platform_name == "tiktok":
+            # Avoid gallery-dl's optional separate audio rendition.
+            config.set(("extractor", "tiktok"), "videos", True)
+            config.set(("extractor", "tiktok"), "audio", False)
+            config.set(("extractor", "tiktok"), "photos", True)
+            if cookies_file and os.path.isfile(cookies_file):
+                config.set(("extractor", "tiktok"), "cookies", cookies_file)
+                log("TikTok: using saved app-private session cookies.")
         elif platform_name == "pinterest":
             config.set(("extractor", "pinterest"), "videos", True)
             config.set(("extractor", "pinterest"), "stories", True)
@@ -528,6 +542,8 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None, cookies_fil
         except Exception as exc:
             last_error = exc
             log(platform_name + " attempt (" + label + ") failed: " + repr(exc))
+            if "destination" in locals() and os.path.isdir(destination):
+                shutil.rmtree(destination, ignore_errors=True)
             continue
 
     raise DownloadError(str(last_error or platform_name + " could not extract this post."))
@@ -551,6 +567,14 @@ def run(url, root, cookies_file, log, on_progress=None):
         except Exception as gallery_error:
             log("Pinterest gallery-dl path failed; trying yt-dlp: " + repr(gallery_error))
             return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
+    if platform_name in ("facebook", "tiktok"):
+        # Use a second maintained extractor when the first one cannot parse the
+        # current page or cannot produce a muxed audio/video file.
+        try:
+            return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
+        except Exception as ytdlp_error:
+            log(platform_name + " yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
+            return _download_gallery_post(url, root, platform_name, cookies_file, log)
     return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
 
 
