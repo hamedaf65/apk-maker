@@ -34,13 +34,21 @@ public final class SociaSaveStorage {
     private SociaSaveStorage() {}
 
     public static String getInstagramCookies() {
+        return getPlatformCookies("https://www.instagram.com");
+    }
+
+    public static String getPlatformCookies(String url) {
         CookieManager manager = CookieManager.getInstance();
         manager.setAcceptCookie(true);
-        String value = manager.getCookie("https://www.instagram.com");
+        String value = manager.getCookie(url);
         return value == null ? "" : value;
     }
 
     public static void openInstagramLogin(final Activity activity) {
+        openPlatformLogin(activity, "https://www.instagram.com/accounts/login/");
+    }
+
+    public static void openPlatformLogin(final Activity activity, final String loginUrl) {
         activity.runOnUiThread(() -> {
             closeInstagramLogin(activity);
 
@@ -100,7 +108,7 @@ public final class SociaSaveStorage {
 
             loginContainer = root;
             loginWebView = webView;
-            webView.loadUrl("https://www.instagram.com/accounts/login/");
+            webView.loadUrl(loginUrl);
         });
     }
 
