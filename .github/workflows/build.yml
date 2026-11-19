@@ -67,7 +67,9 @@ jobs:
           rustc --version
           java -version
       - name: Validate Python syntax
-        run: python -m py_compile main.py core.py
+        run: python -m py_compile main.py core.py yt_dlp_plugins/__init__.py yt_dlp_plugins/extractor/__init__.py yt_dlp_plugins/extractor/threads.py
+      - name: Run offline unit tests
+        run: python -m unittest discover -s tests -v
       - name: Test platform routing and archive metadata
         run: |
           python - <<'PY'
