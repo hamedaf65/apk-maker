@@ -61,6 +61,12 @@ def detect_platform(url):
         return "twitter"
     if "facebook.com" in value or "fb.watch" in value or "fb.com" in value:
         return "facebook"
+    if "tiktok.com" in value:
+        return "tiktok"
+    if "pinterest.com" in value or "pin.it/" in value:
+        return "pinterest"
+    if "threads.net" in value or "threads.com" in value:
+        return "threads"
     return None
 
 
@@ -355,7 +361,8 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
                     metadata = {}
 
                 account_id = _account_id(metadata)
-                post_id = _post_id(metadata, url)
+                # Keep every carousel/reel asset under the post URL's stable ID.
+                post_id = _post_id({}, url) or _post_id(metadata, url)
                 destination = os.path.join(root, platform_name, account_id, post_id)
                 os.makedirs(destination, exist_ok=True)
                 target = os.path.join(destination, os.path.basename(media_path))
@@ -512,13 +519,16 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None):
 def run(url, root, cookies_file, log, on_progress=None):
     platform_name = detect_platform(url)
     if not platform_name:
-        raise DownloadError("Unsupported link. Use Instagram, YouTube, X/Twitter or Facebook.")
+        raise DownloadError("Unsupported link. Use Instagram, YouTube, X, Facebook, TikTok or Pinterest.")
+    if platform_name == "threads":
+        raise DownloadError("Threads links are recognized, but downloading is not enabled: current maintained yt-dlp/gallery-dl releases do not include an official Threads extractor.")
     os.makedirs(root, exist_ok=True)
     log("Detected platform: " + platform_name)
     if platform_name == "instagram":
         return _download_gallery_post(url, root, platform_name, cookies_file, log)
     if platform_name == "twitter":
         return _download_gallery_post(url, root, platform_name, None, log)
+    # yt-dlp includes maintained extractors for TikTok and Pinterest.
     return _download_ytdlp(url, root, platform_name, log, on_progress)
 
 
@@ -552,4 +562,10 @@ def friendly_error(url, error):
         if any(token in lowered for token in ("login", "private", "cookie", "403")):
             return "This Facebook post may require login or permission. Only publicly accessible content is supported."
         return "Facebook could not retrieve compatible media: " + message[:220]
+    if platform_name == "tiktok":
+        return "TikTok could not retrieve this post. Check that it is public and available in your region: " + message[:180]
+    if platform_name == "pinterest":
+        return "Pinterest could not retrieve this Pin. Check that the Pin is public and the link is valid: " + message[:180]
+    if platform_name == "threads":
+        return "Threads downloading is not enabled in this build; only link recognition is available."
     return "The link could not be downloaded: " + message[:220]
