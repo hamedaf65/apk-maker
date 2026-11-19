@@ -17,6 +17,7 @@ from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
@@ -206,10 +207,10 @@ class PlatformTile(BoxLayout):
 
 
 class SocialBanner(BoxLayout):
-    """Four clearly recognizable platform marks, safely contained in one banner."""
+    """Seven-platform banner in a contained two-row layout."""
     def __init__(self, **kwargs):
-        super().__init__(orientation="horizontal", spacing=dp(8),
-                         padding=(dp(10), dp(10)), **kwargs)
+        super().__init__(orientation="vertical", spacing=dp(7),
+                         padding=(dp(9), dp(9)), **kwargs)
         with self.canvas.before:
             Color(1, 1, 1, 0.96)
             self._banner_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(23)])
@@ -218,18 +219,30 @@ class SocialBanner(BoxLayout):
                 rounded_rectangle=(self.x, self.y, self.width, self.height, dp(23)),
                 width=1.1)
         self.bind(pos=self._sync_banner, size=self._sync_banner)
-        self.add_widget(PlatformTile("◎", "Instagram", (0.78, 0.18, 0.54, 1)))
-        self.add_widget(PlatformTile("X", "X / Twitter", (0.10, 0.11, 0.14, 1)))
-        self.add_widget(PlatformTile("▶", "YouTube", (0.87, 0.12, 0.16, 1)))
-        self.add_widget(PlatformTile("f", "Facebook", (0.13, 0.38, 0.77, 1)))
+        first = BoxLayout(orientation="horizontal", spacing=dp(7))
+        second = BoxLayout(orientation="horizontal", spacing=dp(7))
+        for symbol, name, fill in [
+            ("◎", "Instagram", (0.78, 0.18, 0.54, 1)),
+            ("X", "X", (0.10, 0.11, 0.14, 1)),
+            ("▶", "YouTube", (0.87, 0.12, 0.16, 1)),
+            ("f", "Facebook", (0.13, 0.38, 0.77, 1)),
+        ]:
+            first.add_widget(PlatformTile(symbol, name, fill))
+        for symbol, name, fill in [
+            ("♪", "TikTok", (0.08, 0.08, 0.10, 1)),
+            ("P", "Pinterest", (0.76, 0.08, 0.18, 1)),
+            ("@", "Threads*", (0.20, 0.20, 0.23, 1)),
+        ]:
+            second.add_widget(PlatformTile(symbol, name, fill))
+        second.add_widget(Widget())
+        self.add_widget(first)
+        self.add_widget(second)
 
     def _sync_banner(self, *_):
         self._banner_bg.pos = self.pos
         self._banner_bg.size = self.size
         self._banner_border.rounded_rectangle = (
             self.x, self.y, self.width, self.height, dp(23))
-
-
 
 
 class ContactAction(ButtonBehavior, BoxLayout):
@@ -286,6 +299,8 @@ class Root(BoxLayout):
         self.status_close_btn = None
         self.spin_animation = None
         self.current_view = None
+        self.status_open_btn = None
+        self.first_run_marker = os.path.join(user_dir, "vpn_notice_accepted")
         Window.clearcolor = (0.975, 0.965, 1, 1)
         with self.canvas.before:
             Color(0.975, 0.965, 1, 1)
@@ -304,6 +319,32 @@ class Root(BoxLayout):
         self.main_view = self.build_download()
         self.contact_view = self.build_contact()
         self.show_main()
+        Clock.schedule_once(lambda _dt: self.show_first_run_notice(), 0.7)
+
+    def show_first_run_notice(self):
+        if os.path.exists(self.first_run_marker):
+            return
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(14))
+        panel.add_widget(label("پیش از استفاده از SociaSave",
+                               height=dp(46), halign="center", font_size="19sp",
+                               color=(0.13, 0.12, 0.31, 1)))
+        panel.add_widget(label("با توجه به محدودیت‌های دسترسی به شبکه‌های اجتماعی، لطفاً پیش از استفاده از برنامه فیلترشکن خود را روشن کنید.",
+                               height=dp(100), halign="center", font_size="15sp",
+                               color=(0.30, 0.28, 0.43, 1)))
+        accept = button("تأیید و ادامه", size_hint_y=None, height=dp(52),
+                        fill=(0.56, 0.18, 0.92, 1), font_size="16sp")
+        panel.add_widget(accept)
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(250), auto_dismiss=False)
+        def accepted(*_):
+            try:
+                os.makedirs(self.user_dir, exist_ok=True)
+                with open(self.first_run_marker, "w", encoding="utf-8") as handle:
+                    handle.write("accepted")
+            finally:
+                popup.dismiss()
+        accept.bind(on_release=accepted)
+        popup.open()
 
     def _sync_background(self, *_):
         self._background.pos = self.pos
@@ -338,13 +379,13 @@ class Root(BoxLayout):
     def build_download(self):
         scroll, content = self._make_scroll_page()
         hero = BoxLayout(orientation="vertical", spacing=dp(5),
-                         size_hint_y=None, height=dp(205))
-        brand_mark = SocialBanner(size_hint_y=None, height=dp(112))
+                         size_hint_y=None, height=dp(232))
+        brand_mark = SocialBanner(size_hint_y=None, height=dp(140))
         brand = Label(text="[color=151A3D][b]Socia[/b][/color][color=8A27DD][b]Save[/b][/color]",
                       markup=True, font_name=FONT, font_size="31sp",
                       size_hint_y=None, height=dp(42))
-        tagline = label("دانلود محتوا از Instagram، X، YouTube و Facebook",
-                        height=dp(38), halign="center", font_size="13sp",
+        tagline = label("دانلود محتوا از شبکه‌های اجتماعی",
+                        height=dp(34), halign="center", font_size="13sp",
                         color=(0.34, 0.33, 0.49, 1))
         hero.add_widget(brand_mark)
         hero.add_widget(brand)
@@ -353,8 +394,9 @@ class Root(BoxLayout):
 
         input_card = SoftCard(orientation="vertical", padding=(dp(15), dp(13)),
                               spacing=dp(8), size_hint_y=None, height=dp(190))
-        input_card.add_widget(label("آدرس لینک پست مورد نظر خود را از اینستاگرام یا یوتیوب اینجا قرار دهید:",
-                                    height=dp(44), font_size="13sp", color=(0.13, 0.13, 0.31, 1)))
+        input_card.add_widget(label("پست مورد نظر خودتون رو از هر پلتفرمی اینجا قرار دهید:\nآدرس لینک",
+                                    height=dp(50), halign="center", font_size="13sp",
+                                    color=(0.13, 0.13, 0.31, 1)))
         self.url = TextInput(
             multiline=False, size_hint_y=None, height=dp(68),
             hint_text="Paste your link here...",
@@ -397,7 +439,7 @@ class Root(BoxLayout):
         connect_row.add_widget(self.youtube_btn)
         content.add_widget(connect_row)
 
-        self.files_btn = button("▣   Open SociaSave Folder", fill=(0.93, 0.89, 1, 1),
+        self.files_btn = button("▣   محل ذخیره فایل‌های دانلود شده", fill=(0.93, 0.89, 1, 1),
                                 color=(0.15, 0.12, 0.34, 1),
                                 size_hint_y=None, height=dp(58), font_size="16sp")
         self.files_btn.bind(on_release=lambda *_: self.show_downloads())
@@ -531,10 +573,16 @@ class Root(BoxLayout):
             text="Downloading...", font_name=FONT, font_size="19sp",
             color=(0.12, 0.10, 0.26, 1), size_hint_y=None, height=dp(36))
         self.status_detail = Label(
-            text="در حال دریافت محتوا؛ لطفاً برنامه را نبندید",
+            text=fa("در حال دریافت محتوا؛ لطفاً برنامه را نبندید"),
             font_name=FONT, font_size="14sp", color=(0.36, 0.34, 0.49, 1),
             size_hint_y=None, height=dp(82), halign="center", valign="middle")
         self.status_detail.bind(size=lambda widget, size: setattr(widget, "text_size", size))
+        self.status_open_btn = button(
+            "Open Download Folder", size_hint_y=None, height=dp(48),
+            fill=(0.83, 0.97, 0.87, 1), color=(0.10, 0.40, 0.22, 1))
+        self.status_open_btn.disabled = True
+        self.status_open_btn.opacity = 0
+        self.status_open_btn.bind(on_release=lambda *_: self.show_downloads())
         self.status_close_btn = button(
             "Close", size_hint_y=None, height=dp(46),
             fill=(0.93, 0.89, 1, 1), color=(0.20, 0.14, 0.36, 1))
@@ -543,6 +591,7 @@ class Root(BoxLayout):
         panel.add_widget(self.status_ring)
         panel.add_widget(self.status_title)
         panel.add_widget(self.status_detail)
+        panel.add_widget(self.status_open_btn)
         panel.add_widget(self.status_close_btn)
         self.status_popup = LightPopup(
             title="", content=panel, size_hint=(0.88, None), height=dp(350),
@@ -567,15 +616,19 @@ class Root(BoxLayout):
             self.spin_animation = None
         if successes:
             self.status_ring.state = "success"
-            self.status_title.text = "Download completed"
+            self.status_title.text = fa("دانلود انجام شد")
             if failures:
                 self.status_detail.text = fa(str(len(successes)) + " مورد ذخیره شد؛ " + str(len(failures)) + " مورد ناموفق بود.")
             else:
-                self.status_detail.text = fa(str(len(successes)) + " مورد با موفقیت ذخیره شد.")
-            self.files_btn.text = "★   Open SociaSave Folder"
+                self.status_detail.text = fa("فایل با موفقیت ذخیره شد.")
+            self.status_open_btn.disabled = False
+            self.status_open_btn.opacity = 1
+            self.files_btn.text = "★   محل ذخیره فایل‌های دانلود شده"
             self.files_btn.set_fill((0.83, 0.97, 0.87, 1))
         else:
             self.status_ring.state = "error"
+            self.status_open_btn.disabled = True
+            self.status_open_btn.opacity = 0
             self.status_title.text = "Download failed"
             self.status_detail.text = failures[0] if failures else fa("دانلود انجام نشد؛ لینک را بررسی کنید.")
         self.status_close_btn.disabled = False
@@ -587,20 +640,22 @@ class Root(BoxLayout):
             self.status_popup = None
 
     def youtube_connect_info(self):
-        message = ("Public YouTube videos can be downloaded without connecting an account. "
-                   "Google blocks sign-in inside embedded Android WebViews, so this app cannot "
-                   "safely reuse your Google account session. Private, members-only or age-verified "
-                   "videos may not be supported.")
-        body = BoxLayout(orientation="vertical", padding=14, spacing=10)
-        body.add_widget(Label(text=message, font_name=FONT, color=(0.12, 0.10, 0.28, 1),
-                              halign="center", valign="middle"))
-        open_btn = button("Open YouTube", size_hint_y=None, height=44, fill=(0.88, 0.10, 0.16, 1))
-        close_btn = button("Close", size_hint_y=None, height=44,
-                           fill=(0.91, 0.87, 1, 1), color=(0.12, 0.10, 0.28, 1))
-        body.add_widget(open_btn)
-        body.add_widget(close_btn)
-        popup = Popup(title="YouTube connection", content=body, size_hint=(0.88, None),
-                      height=dp(300), auto_dismiss=False)
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        panel.add_widget(label("برای دانلود ویدیوهای عمومی یوتیوب نیازی به اتصال حساب نیست.",
+                               height=dp(66), halign="center", font_size="15sp",
+                               color=(0.12, 0.10, 0.28, 1)))
+        panel.add_widget(label("ورود گوگل در WebView داخلی پشتیبانی نمی‌شود. باز شدن اپ YouTube نیز نشست ورود را به SociaSave منتقل نمی‌کند.",
+                               height=dp(88), halign="center", font_size="13sp",
+                               color=(0.36, 0.34, 0.49, 1)))
+        open_btn = button("Open YouTube", size_hint_y=None, height=dp(50),
+                          fill=(0.87, 0.12, 0.16, 1))
+        close_btn = button("Close", size_hint_y=None, height=dp(50),
+                           fill=(0.93, 0.89, 1, 1),
+                           color=(0.12, 0.10, 0.28, 1))
+        panel.add_widget(open_btn)
+        panel.add_widget(close_btn)
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(330), auto_dismiss=False)
         open_btn.bind(on_release=lambda *_: (popup.dismiss(), open_url("https://www.youtube.com")))
         close_btn.bind(on_release=popup.dismiss)
         popup.open()
