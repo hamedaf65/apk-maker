@@ -325,6 +325,8 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
         config.set(("extractor",), "base-directory", temp_root)
         config.set(("extractor",), "directory", [])
         config.set(("extractor",), "filename", "{filename}.{extension}")
+        if cookies_file and os.path.isfile(cookies_file):
+            config.set(("extractor",), "cookies", cookies_file)
         config.set(("extractor",), "postprocessors", [
             {"name": "metadata", "mode": "json", "filename": "{filename}.{extension}.json"}
         ])
@@ -553,8 +555,6 @@ def run(url, root, cookies_file, log, on_progress=None):
     platform_name = detect_platform(url)
     if not platform_name:
         raise DownloadError("Unsupported link. Use Instagram, YouTube, X, Facebook, TikTok or Pinterest.")
-    if platform_name == "threads":
-        raise DownloadError("Threads links are recognized, but downloading is not enabled: current maintained yt-dlp/gallery-dl releases do not include an official Threads extractor.")
     os.makedirs(root, exist_ok=True)
     log("Detected platform: " + platform_name)
     if platform_name in ("instagram", "twitter"):
@@ -613,5 +613,5 @@ def friendly_error(url, error):
     if platform_name == "pinterest":
         return "Pinterest could not retrieve this Pin. Check that the Pin is public and the link is valid: " + message[:180]
     if platform_name == "threads":
-        return "Threads downloading is not enabled in this build; only link recognition is available."
+        return "Threads supports public video posts only in this build. Private, login-gated, image-only and text-only posts are not supported."
     return "The link could not be downloaded: " + message[:220]
