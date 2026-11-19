@@ -41,6 +41,7 @@ public final class SociaSaveStorage {
         CookieManager manager = CookieManager.getInstance();
         manager.setAcceptCookie(true);
         String value = manager.getCookie(url);
+        manager.flush();
         return value == null ? "" : value;
     }
 
