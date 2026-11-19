@@ -236,11 +236,12 @@ def merge_separate_audio_video(folder, log):
         return False
 
     stream_extensions = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
-    files = [
-        os.path.join(folder, name) for name in os.listdir(folder)
-        if os.path.isfile(os.path.join(folder, name))
-        and os.path.splitext(name)[1].lower() in stream_extensions
-    ]
+    files = []
+    for current, _directories, names in os.walk(folder):
+        for name in names:
+            path = os.path.join(current, name)
+            if os.path.isfile(path) and os.path.splitext(name)[1].lower() in stream_extensions:
+                files.append(path)
     video_only, audio_only = [], []
     for path in files:
         has_video, has_audio = _probe_streams(path)
@@ -330,13 +331,24 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
         if platform_name == "instagram":
             config.set(("extractor", "instagram"), "include", "posts,reels")
             config.set(("extractor", "instagram"), "videos", True)
-            config.set(("extractor", "instagram"), "audio", True)
+            # gallery-dl's audio=True downloads a separate audio rendition.
+            # Reels should be saved as their original video container with sound.
+            config.set(("extractor", "instagram"), "audio", False)
             config.set(("extractor", "instagram"), "previews", False)
             if cookies_file and os.path.isfile(cookies_file):
                 config.set(("extractor", "instagram"), "cookies", cookies_file)
                 log("Instagram: using saved app-private session cookies.")
+        elif platform_name == "pinterest":
+            config.set(("extractor", "pinterest"), "videos", True)
+            config.set(("extractor", "pinterest"), "stories", True)
+            config.set(("extractor", "pinterest"), "sections", True)
+            if cookies_file and os.path.isfile(cookies_file):
+                config.set(("extractor", "pinterest"), "cookies", cookies_file)
+                log("Pinterest: using saved app-private session cookies.")
         elif platform_name == "twitter":
             log("X/Twitter: downloading media from the public post.")
+            if cookies_file and os.path.isfile(cookies_file):
+                config.set(("extractor", "twitter"), "cookies", cookies_file)
         job.DownloadJob(url).run()
 
         media = _media_files(temp_root)
@@ -425,7 +437,7 @@ class _YtLogger:
         self.log("Extractor error: " + str(message))
 
 
-def _download_ytdlp(url, root, platform_name, log, on_progress=None):
+def _download_ytdlp(url, root, platform_name, log, on_progress=None, cookies_file=None):
     """Use yt-dlp for YouTube and Facebook video posts."""
     import yt_dlp
 
@@ -448,6 +460,9 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None):
             "socket_timeout": 35,
             "ffmpeg_location": executable,
         }
+        if cookies_file and os.path.isfile(cookies_file):
+            options["cookiefile"] = cookies_file
+            log(platform_name + ": using saved app-private session cookies.")
         if platform_name == "youtube":
             options["remote_components"] = ["ejs:github"]
             if player_clients:
@@ -482,7 +497,9 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None):
                     on_progress(100)
 
             options.update({
-                "format": "bv*+ba/b",
+                # Prefer a progressive stream (video+audio in one file).
+                # Only fall back to separate best-video + best-audio when needed.
+                "format": "best[acodec!=none][vcodec!=none]/bv+ba/b",
                 "merge_output_format": "mkv",
                 "outtmpl": os.path.join(destination, "%(title).120B.%(ext)s"),
                 "progress_hooks": [progress_hook],
@@ -524,12 +541,17 @@ def run(url, root, cookies_file, log, on_progress=None):
         raise DownloadError("Threads links are recognized, but downloading is not enabled: current maintained yt-dlp/gallery-dl releases do not include an official Threads extractor.")
     os.makedirs(root, exist_ok=True)
     log("Detected platform: " + platform_name)
-    if platform_name == "instagram":
+    if platform_name in ("instagram", "twitter"):
         return _download_gallery_post(url, root, platform_name, cookies_file, log)
-    if platform_name == "twitter":
-        return _download_gallery_post(url, root, platform_name, None, log)
-    # yt-dlp includes maintained extractors for TikTok and Pinterest.
-    return _download_ytdlp(url, root, platform_name, log, on_progress)
+    if platform_name == "pinterest":
+        # gallery-dl handles image Pins as well as supported video Pins; yt-dlp
+        # currently reports "No video formats found" for some image-only Pins.
+        try:
+            return _download_gallery_post(url, root, platform_name, cookies_file, log)
+        except Exception as gallery_error:
+            log("Pinterest gallery-dl path failed; trying yt-dlp: " + repr(gallery_error))
+            return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
+    return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
 
 
 def friendly_error(url, error):
