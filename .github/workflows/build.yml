@@ -121,6 +121,23 @@ jobs:
         with:
           name: sociasave-build-log
           path: build.log
+      - name: Verify Android bridge is packaged in DEX
+        run: |
+          set -e
+          apk="$(find bin -maxdepth 1 -name '*.apk' | head -n 1)"
+          test -n "$apk"
+          for dex in $(unzip -Z1 "$apk" | grep -E '^classes([0-9]+)?\\.dex
+        with:
+          name: SociaSave-Android-APK
+          path: bin/*.apk
+); do
+            if unzip -p "$apk" "$dex" | strings | grep -q 'org/hamedafshari/sociasave/SociaSaveStorage'; then
+              echo "SociaSaveStorage found in $dex"
+              exit 0
+            fi
+          done
+          echo "SociaSaveStorage class is missing from APK DEX files."
+          exit 1
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
