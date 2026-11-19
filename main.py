@@ -825,7 +825,7 @@ class Root(BoxLayout):
             token in raw for token in markers[platform_name])
         if authenticated:
             expiry = int(time.time()) + 180 * 24 * 3600
-            host = domains[platform_name].split("://", 1)[1]
+            host = domains[platform_name].split("://", 1)[1].removeprefix("www.")
             lines = ["# Netscape HTTP Cookie File"]
             for part in raw.split(";"):
                 if "=" in part:
