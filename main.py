@@ -169,8 +169,8 @@ class SoftCard(BoxLayout):
 class LightPopup(Popup):
     """Consistent high-contrast lavender style for every app notification."""
     ALERT_BG = (0.94, 0.91, 1, 1)
-    ALERT_TEXT = (0.15, 0.12, 0.34, 1)
-    ALERT_FONT = "16sp"
+    ALERT_TEXT = (0.15, 0.12, 0.34, 1)  # same dark purple as the Downloads button
+    ALERT_FONT = "16sp"  # consistent readable size across every popup
 
     def __init__(self, **kwargs):
         kwargs.setdefault("background", "")
@@ -191,14 +191,22 @@ class LightPopup(Popup):
             return
         if isinstance(widget, Label):
             widget.color = self.ALERT_TEXT
+            widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
         if isinstance(widget, Button):
             widget.color = self.ALERT_TEXT
+            widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
             if isinstance(widget, RoundedButton):
                 widget.set_fill(self.ALERT_BG)
         for child in getattr(widget, "children", []):
             self._apply_alert_style(child)
+
+    def open(self, *args, **kwargs):
+        # Some dialogs add their buttons after constructing the Popup.
+        # Apply the shared palette immediately before displaying it.
+        self._apply_alert_style(self.content)
+        return super().open(*args, **kwargs)
 
     def _sync_light_bg(self, *_):
         self._light_bg.pos = self.pos
@@ -629,14 +637,9 @@ class Root(BoxLayout):
         if not ring or ring.state != "loading":
             return
         animation = Animation(angle=ring.angle + 360, duration=1.05, t="linear")
+        animation.repeat = True
         self.spin_animation = animation
-        animation.bind(on_complete=self._repeat_spin)
         animation.start(ring)
-
-    def _repeat_spin(self, _animation, ring):
-        if ring.state == "loading" and self.status_popup:
-            ring.angle = 0
-            self._start_spin(ring)
 
     def finish_download(self, successes, failures):
         self.busy = False
