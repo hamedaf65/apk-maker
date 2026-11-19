@@ -2,6 +2,7 @@ import re
 import unittest
 
 import core
+import pinterest_extractor
 from yt_dlp_plugins.extractor.threads import ThreadsIE
 
 
@@ -19,6 +20,36 @@ class SociaSaveCoreTests(unittest.TestCase):
         for url, expected in cases.items():
             with self.subTest(url=url):
                 self.assertEqual(core.detect_platform(url), expected)
+
+
+    def test_pinterest_pin_id_from_canonical_url(self):
+        result = pinterest_extractor.extract_page_data(
+            "<html></html>",
+            "https://www.pinterest.com/pin/718324209369027318/",
+        )
+        self.assertEqual(result[3], "718324209369027318")
+
+    def test_pinterest_extracts_video_and_image_from_embedded_json(self):
+        page = '''<html><head><meta property="og:description" content="A sample Pin"></head>
+        <script type="application/json">
+        {"videos":{"video_list":{"V_720P":{"url":"https://v1.pinimg.com/videos/mc/expMp4/abc.mp4"}}},
+         "images":{"orig":{"url":"https://i.pinimg.com/originals/ab/cd/image.jpg"}}}
+        </script></html>'''
+        videos, images, caption, pin_id = pinterest_extractor.extract_page_data(
+            page, "https://www.pinterest.com/pin/718324209369027318/"
+        )
+        self.assertTrue(any(url.endswith("abc.mp4") for url in videos))
+        self.assertTrue(any(url.endswith("image.jpg") for url in images))
+        self.assertEqual(caption, "A sample Pin")
+        self.assertEqual(pin_id, "718324209369027318")
+
+    def test_pinterest_extracts_og_image(self):
+        page = '<meta property="og:image" content="https://i.pinimg.com/originals/ab/cd/photo.jpg">'
+        videos, images, _caption, _pin_id = pinterest_extractor.extract_page_data(
+            page, "https://www.pinterest.com/pin/123456789012345/"
+        )
+        self.assertEqual(videos, [])
+        self.assertEqual(images, ["https://i.pinimg.com/originals/ab/cd/photo.jpg"])
 
     def test_extract_urls_removes_trailing_punctuation(self):
         self.assertEqual(
