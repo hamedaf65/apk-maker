@@ -1,6 +1,6 @@
 # SociaSave — Android social media downloader
 
-SociaSave is an Android app by Hamed AI for organizing media posts that the user is authorized to save from Instagram, YouTube, X (Twitter), and Facebook.
+SociaSave is an Android app by Hamed AI for organizing media posts that the user is authorized to save from Instagram, YouTube, X (Twitter), Facebook, TikTok, Pinterest, and experimental Threads link recognition.
 
 ## App features
 
@@ -15,7 +15,7 @@ SociaSave is an Android app by Hamed AI for organizing media posts that the user
 - Instagram: gallery-dl for supported posts, carousels and Reels; Instagram cookies are stored in the app-private directory.
 - X/Twitter: gallery-dl for supported public posts and media.
 - YouTube: yt-dlp with FFmpeg for supported public videos. YouTube's current JavaScript challenge requirements may still require a compatible JS runtime, and PO-token / anti-bot restrictions can block some videos.
-- Facebook: yt-dlp for supported public videos and Reels. Private or login-gated media is not guaranteed.
+- Facebook: yt-dlp for supported public videos and Reels. Private or login-gated media is not guaranteed.\n- TikTok and Pinterest: yt-dlp extractors for supported public posts and Pins.\n- Threads: recognized in the interface, but downloading is not enabled because current maintained yt-dlp/gallery-dl releases do not include an official extractor.
 
 ## Download archive layout
 
