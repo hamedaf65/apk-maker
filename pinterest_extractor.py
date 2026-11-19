@@ -245,23 +245,29 @@ def download_pin(url, root, cookies_file=None, log=None, ffmpeg_path=None):
             failures.append(str(exc))
             log("Pinterest video candidate failed: " + str(exc)[:220])
 
-    for media_url in images:
+    downloaded_images = 0
+    for index, media_url in enumerate(images, 1):
         path = urlparse(media_url).path.lower()
         extension = os.path.splitext(path)[1]
         if extension == ".jpeg":
             extension = ".jpg"
         if extension not in (".jpg", ".png", ".webp", ".gif"):
             extension = ".jpg"
-        target = os.path.join(destination, "pinterest_" + pin_id + extension)
+        suffix = "" if index == 1 else "_" + str(index)
+        target = os.path.join(destination, "pinterest_" + pin_id + suffix + extension)
         try:
             _download_file(session, media_url, target, final_url)
-            _write_text(destination, caption, final_url)
-            log("Pinterest image downloaded from the Pin page.")
-            response.close()
-            return destination
+            downloaded_images += 1
+            log("Pinterest image " + str(index) + " downloaded.")
         except Exception as exc:
             failures.append(str(exc))
             log("Pinterest image candidate failed: " + str(exc)[:220])
+
+    if downloaded_images:
+        _write_text(destination, caption, final_url)
+        log("Pinterest Pin image media saved (" + str(downloaded_images) + " file(s)).")
+        response.close()
+        return destination
 
     response.close()
     if not videos and not images:
