@@ -167,19 +167,38 @@ class SoftCard(BoxLayout):
 
 
 class LightPopup(Popup):
-    """A light, rounded popup surface independent of the Android dark theme."""
+    """Consistent high-contrast lavender style for every app notification."""
+    ALERT_BG = (0.94, 0.91, 1, 1)
+    ALERT_TEXT = (0.15, 0.12, 0.34, 1)
+    ALERT_FONT = "16sp"
+
     def __init__(self, **kwargs):
         kwargs.setdefault("background", "")
         kwargs.setdefault("background_color", (0, 0, 0, 0))
         super().__init__(**kwargs)
+        self._apply_alert_style(self.content)
         with self.canvas.before:
-            Color(0.99, 0.98, 1, 1)
+            Color(*self.ALERT_BG)
             self._light_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
-            Color(0.79, 0.72, 0.95, 0.75)
+            Color(0.72, 0.63, 0.91, 0.95)
             self._light_border = Line(
                 rounded_rectangle=(self.x, self.y, self.width, self.height, dp(24)),
                 width=1.0)
         self.bind(pos=self._sync_light_bg, size=self._sync_light_bg)
+
+    def _apply_alert_style(self, widget):
+        if widget is None:
+            return
+        if isinstance(widget, Label):
+            widget.color = self.ALERT_TEXT
+            widget.font_size = self.ALERT_FONT
+        if isinstance(widget, Button):
+            widget.color = self.ALERT_TEXT
+            widget.font_size = self.ALERT_FONT
+            if isinstance(widget, RoundedButton):
+                widget.set_fill(self.ALERT_BG)
+        for child in getattr(widget, "children", []):
+            self._apply_alert_style(child)
 
     def _sync_light_bg(self, *_):
         self._light_bg.pos = self.pos
@@ -292,6 +311,7 @@ class Root(BoxLayout):
         self.busy = False
         self.wv = None
         self.login_open = False
+        self.login_platform = None
         self.status_popup = None
         self.status_ring = None
         self.status_title = None
@@ -434,9 +454,9 @@ class Root(BoxLayout):
         self.login_btn = button("◎   Connect to Instagram", fill=(0.94, 0.89, 1, 1),
                                 color=(0.15, 0.12, 0.34, 1), font_size="13sp")
         self.login_btn.bind(on_release=lambda *_: self.instagram_login())
-        self.youtube_btn = button("▶   Connect to YouTube", fill=(1, 0.90, 0.93, 1),
+        self.youtube_btn = button("＋   Connect More Accounts", fill=(0.94, 0.91, 1, 1),
                                   color=(0.15, 0.12, 0.34, 1), font_size="13sp")
-        self.youtube_btn.bind(on_release=lambda *_: self.youtube_connect_info())
+        self.youtube_btn.bind(on_release=lambda *_: self.connect_other_accounts())
         connect_row.add_widget(self.login_btn)
         connect_row.add_widget(self.youtube_btn)
         content.add_widget(connect_row)
@@ -539,7 +559,9 @@ class Root(BoxLayout):
         for index, url in enumerate(urls, 1):
             self.log("Starting: " + url)
             try:
-                cookies = self.cookies_path if ("instagram.com" in url.lower() and os.path.exists(self.cookies_path)) else None
+                platform_name = core.detect_platform(url)
+                cookies_path = self._cookie_file(platform_name)
+                cookies = cookies_path if os.path.isfile(cookies_path) else None
                 def on_progress(value, current=index):
                     overall = ((current - 1) + max(0, min(100, float(value))) / 100.0) * 100.0 / total
                     self.progress(overall)
@@ -601,14 +623,20 @@ class Root(BoxLayout):
             background="", background_color=(0.99, 0.98, 1, 1))
         self.status_ring.on_finished = self.dismiss_status
         self.status_popup.open()
-        self.spin_animation = Animation(angle=360, duration=1.05)
-        self.spin_animation.bind(on_complete=self._repeat_spin)
-        self.spin_animation.start(self.status_ring)
+        self._start_spin(self.status_ring)
+
+    def _start_spin(self, ring):
+        if not ring or ring.state != "loading":
+            return
+        animation = Animation(angle=ring.angle + 360, duration=1.05, t="linear")
+        self.spin_animation = animation
+        animation.bind(on_complete=self._repeat_spin)
+        animation.start(ring)
 
     def _repeat_spin(self, _animation, ring):
-        if ring.state == "loading":
+        if ring.state == "loading" and self.status_popup:
             ring.angle = 0
-            self.spin_animation.start(ring)
+            self._start_spin(ring)
 
     def finish_download(self, successes, failures):
         self.busy = False
@@ -640,6 +668,36 @@ class Root(BoxLayout):
         if self.status_popup:
             self.status_popup.dismiss()
             self.status_popup = None
+
+    def connect_other_accounts(self):
+        panel = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
+        panel.add_widget(label("اتصال اختیاری حساب‌های شبکه‌های اجتماعی",
+                               height=dp(48), halign="center", font_size="17sp"))
+        choices = [
+            ("Connect to Facebook", "facebook"),
+            ("Connect to TikTok", "tiktok"),
+            ("Connect to Pinterest", "pinterest"),
+        ]
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(360), auto_dismiss=False)
+        for title, platform_name in choices:
+            action = button(title, size_hint_y=None, height=dp(48),
+                            fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT)
+            action.bind(on_release=lambda _btn, name=platform_name:
+                        (popup.dismiss(), self.start_platform_login(name)))
+            panel.add_widget(action)
+        youtube = button("YouTube connection information",
+                         size_hint_y=None, height=dp(48),
+                         fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT)
+        youtube.bind(on_release=lambda *_: (popup.dismiss(), self.youtube_connect_info()))
+        panel.add_widget(youtube)
+        threads = label("Threads: downloading is not available yet.",
+                        height=dp(38), halign="center")
+        panel.add_widget(threads)
+        close = button("Close", size_hint_y=None, height=dp(46))
+        close.bind(on_release=popup.dismiss)
+        panel.add_widget(close)
+        popup.open()
 
     def youtube_connect_info(self):
         panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
@@ -701,19 +759,35 @@ class Root(BoxLayout):
         popup.open()
 
 
-    # ------------------------------------------ Instagram login (private)
+    # ------------------------------------------ optional account sessions
+    def _cookie_file(self, platform_name):
+        return os.path.join(self.user_dir, (platform_name or "unknown") + "_cookies.txt")
+
     def instagram_login(self):
+        self.start_platform_login("instagram")
+
+    def start_platform_login(self, platform_name):
         if platform != "android":
             self.log(fa("ورود فقط روی گوشی اندروید پشتیبانی می‌شود."))
             return
+        login_urls = {
+            "instagram": "https://www.instagram.com/accounts/login/",
+            "facebook": "https://www.facebook.com/login/",
+            "tiktok": "https://www.tiktok.com/login",
+            "pinterest": "https://www.pinterest.com/login/",
+        }
+        if platform_name not in login_urls:
+            return
         try:
             Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
-            Storage.openInstagramLogin(PythonActivity.mActivity)
+            Storage.openPlatformLogin(PythonActivity.mActivity, login_urls[platform_name])
+            self.login_platform = platform_name
             self.login_open = True
             Clock.schedule_interval(self._poll_login, 1.5)
         except Exception as exc:
             self.login_open = False
-            self.log("Could not open Instagram login: " + repr(exc))
+            self.login_platform = None
+            self.log("Could not open " + platform_name + " login: " + repr(exc))
 
     def _close_webview(self):
         try:
@@ -723,30 +797,52 @@ class Root(BoxLayout):
         except Exception as exc:
             self.log("Could not close Instagram login view: " + repr(exc))
         self.login_open = False
+        self.login_platform = None
 
     def _poll_login(self, dt):
-        if not self.login_open:
+        if not self.login_open or not self.login_platform:
             return False
+        platform_name = self.login_platform
+        domains = {
+            "instagram": "https://www.instagram.com",
+            "facebook": "https://www.facebook.com",
+            "tiktok": "https://www.tiktok.com",
+            "pinterest": "https://www.pinterest.com",
+        }
+        markers = {
+            "instagram": ("sessionid=",),
+            "facebook": ("c_user=", "xs="),
+            "tiktok": ("sessionid=", "sid_tt="),
+            "pinterest": ("_pinterest_sess=",),
+        }
         try:
             Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
-            raw = str(Storage.getInstagramCookies() or "")
+            raw = str(Storage.getPlatformCookies(domains[platform_name]) or "")
         except Exception:
             return True
 
-        if "sessionid=" in raw:
-            expiry = int(time.time()) + 365 * 24 * 3600
+        authenticated = all(token in raw for token in markers[platform_name]) if platform_name == "facebook" else any(
+            token in raw for token in markers[platform_name])
+        if authenticated:
+            expiry = int(time.time()) + 180 * 24 * 3600
+            host = domains[platform_name].split("://", 1)[1]
             lines = ["# Netscape HTTP Cookie File"]
             for part in raw.split(";"):
                 if "=" in part:
                     key, value = part.strip().split("=", 1)
-                    prefix = "#HttpOnly_" if key.lower() in ("sessionid", "csrftoken") else ""
-                    lines.append("%s.instagram.com\tTRUE\t/\tTRUE\t%d\t%s\t%s" %
-                                 (prefix, expiry, key, value))
+                    if not key:
+                        continue
+                    prefix = "#HttpOnly_" if key.lower() in (
+                        "sessionid", "sid_tt", "c_user", "xs", "_pinterest_sess",
+                        "auth_token", "ct0", "csrftoken") else ""
+                    lines.append("%s.%s\tTRUE\t/\tTRUE\t%d\t%s\t%s" %
+                                 (prefix, host, expiry, key, value))
+            cookie_path = self._cookie_file(platform_name)
             os.makedirs(self.user_dir, exist_ok=True)
-            with open(self.cookies_path, "w", encoding="utf-8") as handle:
+            with open(cookie_path, "w", encoding="utf-8") as handle:
                 handle.write("\n".join(lines) + "\n")
             self._close_webview()
-            self.log(fa("✔ ورود انجام شد. به SociaSave برگشتید؛ لینک را دانلود کنید."))
+            self.log(fa("✔ ورود انجام شد. نشست حساب به‌صورت خصوصی ذخیره شد."))
             return False
         try:
             if not Storage.isInstagramLoginVisible():
