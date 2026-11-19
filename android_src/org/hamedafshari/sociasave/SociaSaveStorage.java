@@ -5,6 +5,7 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.content.res.ColorStateList;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -55,7 +56,10 @@ public final class SociaSaveStorage {
 
             Button back = new Button(activity);
             back.setText("Back");
+            back.setAllCaps(false);
             back.setTextColor(Color.rgb(65, 35, 105));
+            back.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(235, 226, 250)));
+            back.setMinHeight(52);
             back.setOnClickListener(v -> {
                 if (loginWebView != null && loginWebView.canGoBack()) {
                     loginWebView.goBack();
@@ -64,7 +68,10 @@ public final class SociaSaveStorage {
 
             Button close = new Button(activity);
             close.setText("Close");
-            close.setTextColor(Color.rgb(65, 35, 105));
+            close.setAllCaps(false);
+            close.setTextColor(Color.WHITE);
+            close.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(112, 55, 205)));
+            close.setMinHeight(52);
             close.setOnClickListener(v -> closeInstagramLogin(activity));
 
             LinearLayout.LayoutParams buttonParams =
@@ -82,10 +89,11 @@ public final class SociaSaveStorage {
             webView.setWebViewClient(new WebViewClient());
             webView.setBackgroundColor(Color.WHITE);
 
-            root.addView(toolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            // Keep navigation controls anchored at the bottom of the login page.
             root.addView(webView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+            root.addView(toolbar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 68)));
 
             activity.addContentView(root, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -123,25 +131,53 @@ public final class SociaSaveStorage {
         return loginContainer != null;
     }
 
+    public static boolean ensureSociaSaveFolder(Activity activity) throws IOException {
+        if (Build.VERSION.SDK_INT < 29) {
+            throw new IOException("SociaSave public folder requires Android 10 or newer.");
+        }
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, ".nomedia");
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream");
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/SociaSave/");
+        Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IOException("Android could not initialize Download/SociaSave.");
+        try (OutputStream output = activity.getContentResolver().openOutputStream(uri, "w")) {
+            if (output == null) throw new IOException("Could not initialize SociaSave folder.");
+        }
+        return true;
+    }
+
     public static boolean exportDirectory(Activity activity, String sourceDirectory,
                                           String relativeDirectory) throws IOException {
         if (Build.VERSION.SDK_INT < 29) {
             throw new IOException("Public Downloads export requires Android 10 or newer.");
         }
-        File folder = new File(sourceDirectory);
-        File[] files = folder.listFiles();
-        if (files == null) throw new IOException("Downloaded folder could not be read.");
-
-        int exported = 0;
-        for (File file : files) {
-            if (!file.isFile()) continue;
-            String lower = file.getName().toLowerCase();
-            if (lower.endsWith(".json") || lower.endsWith(".part") || lower.startsWith(".")) continue;
-            exportOne(activity, file, relativeDirectory);
-            exported++;
-        }
+        int exported = exportTree(activity, new File(sourceDirectory), relativeDirectory);
         if (exported == 0) throw new IOException("No downloadable media or caption files were found.");
         return true;
+    }
+
+    private static int exportTree(Activity activity, File folder, String relativeDirectory)
+        throws IOException {
+        File[] entries = folder.listFiles();
+        if (entries == null) throw new IOException("Downloaded folder could not be read: " + folder);
+        int exported = 0;
+        for (File entry : entries) {
+            if (entry.isDirectory()) {
+                exported += exportTree(activity, entry, relativeDirectory + "/" + entry.getName());
+                continue;
+            }
+            if (!entry.isFile()) continue;
+            String lower = entry.getName().toLowerCase();
+            if (lower.endsWith(".json") || lower.endsWith(".part") || lower.startsWith(".")) continue;
+            exportOne(activity, entry, relativeDirectory);
+            exported++;
+        }
+        return exported;
+    }
+
+    private static int dp(Activity activity, int value) {
+        return (int) (value * activity.getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private static void exportOne(Activity activity, File source, String relativeDirectory)
