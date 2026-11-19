@@ -560,13 +560,29 @@ def run(url, root, cookies_file, log, on_progress=None):
     if platform_name in ("instagram", "twitter"):
         return _download_gallery_post(url, root, platform_name, cookies_file, log)
     if platform_name == "pinterest":
-        # gallery-dl handles image Pins as well as supported video Pins; yt-dlp
-        # currently reports "No video formats found" for some image-only Pins.
+        # First use a dedicated public Pin-page extractor. Keep maintained
+        # extractors as fallback for page variants we do not yet understand.
+        try:
+            from pinterest_extractor import download_pin
+            return download_pin(
+                url, root, cookies_file=cookies_file, log=log,
+                ffmpeg_path=_ffmpeg_path(),
+            )
+        except Exception as direct_error:
+            log("Pinterest direct page extraction failed; trying gallery-dl: " + repr(direct_error))
         try:
             return _download_gallery_post(url, root, platform_name, cookies_file, log)
         except Exception as gallery_error:
             log("Pinterest gallery-dl path failed; trying yt-dlp: " + repr(gallery_error))
-            return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
+            try:
+                return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
+            except Exception as ytdlp_error:
+                raise DownloadError(
+                    "Pinterest direct extractor, gallery-dl and yt-dlp all failed. "
+                    "Direct: " + str(direct_error)[:180] +
+                    " | gallery-dl: " + str(gallery_error)[:180] +
+                    " | yt-dlp: " + str(ytdlp_error)[:180]
+                ) from ytdlp_error
     if platform_name in ("facebook", "tiktok"):
         # Use a second maintained extractor when the first one cannot parse the
         # current page or cannot produce a muxed audio/video file.
