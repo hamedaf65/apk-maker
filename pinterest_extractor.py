@@ -21,11 +21,11 @@ USER_AGENT = (
 )
 PIN_ID_RE = re.compile(r"/pin/(?:[^/]*?--)?(\d{6,})", re.I)
 VIDEO_RE = re.compile(
-    r"https?://[^\s"'<>\\]+?\.(?:mp4|m3u8)(?:\?[^\s"'<>\\]*)?",
+    r"https?://[^\s<>\\]+?\.(?:mp4|m3u8)(?:\?[^\s<>\\]*)?",
     re.I,
 )
 IMAGE_RE = re.compile(
-    r"https?://i\\.pinimg\\.com/(?:originals|\\d+x\\d+(?:_RS)?)/"
+    r"https?://i\.pinimg\.com/(?:originals|\d+x\d+(?:_RS)?)/"
     r"[A-Za-z0-9_./-]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>\\]*)?",
     re.I,
 )
@@ -112,9 +112,9 @@ def extract_page_data(page, source_url):
         lower = candidate.lower()
         if "pinimg.com" in lower and (".mp4" in lower or ".m3u8" in lower):
             video_urls.append(candidate)
-        elif re.search(r"\\.(?:mp4|m3u8)(?:\\?|$)", lower):
+        elif re.search(r"\.(?:mp4|m3u8)(?:\?|$)", lower):
             video_urls.append(candidate)
-        elif "i.pinimg.com/" in lower and re.search(r"\\.(?:jpe?g|png|webp|gif)(?:\\?|$)", lower):
+        elif "i.pinimg.com/" in lower and re.search(r"\.(?:jpe?g|png|webp|gif)(?:\?|$)", lower):
             image_urls.append(candidate)
 
     og_image = meta.get("og:image") or meta.get("twitter:image:src") or meta.get("twitter:image")
