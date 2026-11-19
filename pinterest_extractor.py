@@ -26,7 +26,7 @@ VIDEO_RE = re.compile(
 )
 IMAGE_RE = re.compile(
     r"https?://i\.pinimg\.com/(?:originals|\d+x\d+(?:_RS)?)/"
-    r"[A-Za-z0-9_./-]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>\\]*)?",
+    r"[A-Za-z0-9_./-]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s<>\\]*)?",
     re.I,
 )
 
