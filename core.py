@@ -371,7 +371,7 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
         if not media:
             if platform_name == "instagram":
                 raise NeedLogin("Instagram returned no media. The session may have expired or the post may require access.")
-            raise DownloadError("X/Twitter returned no public media for this post.")
+            raise DownloadError(platform_name + " returned no public media for this post.")
 
         folders, moved, captions = [], set(), {}
         for current, _dirs, names in os.walk(temp_root):
