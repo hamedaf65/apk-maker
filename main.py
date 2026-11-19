@@ -679,7 +679,7 @@ class Root(BoxLayout):
             ("Connect to Pinterest", "pinterest"),
         ]
         popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
-                           height=dp(360), auto_dismiss=False)
+                           height=dp(420), auto_dismiss=False)
         for title, platform_name in choices:
             action = button(title, size_hint_y=None, height=dp(48),
                             fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT)
