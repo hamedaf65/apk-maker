@@ -1,5 +1,6 @@
 import re
 import unittest
+from unittest.mock import patch
 
 import core
 import pinterest_extractor
@@ -50,6 +51,36 @@ class SociaSaveCoreTests(unittest.TestCase):
         )
         self.assertEqual(videos, [])
         self.assertEqual(images, ["https://i.pinimg.com/originals/ab/cd/photo.jpg"])
+
+    def test_facebook_share_url_resolves_to_canonical_url(self):
+        class FakeResponse:
+            url = "https://www.facebook.com/posts/123456789/"
+            def close(self):
+                pass
+        class FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.cookies = type("Cookies", (), {"update": lambda self, jar: None})()
+            def get(self, *args, **kwargs):
+                return FakeResponse()
+        with patch("requests.Session", return_value=FakeSession()):
+            resolved = core._resolve_facebook_share_url("https://www.facebook.com/share/p/shortcode/")
+        self.assertEqual(resolved, "https://www.facebook.com/posts/123456789/")
+
+    def test_facebook_share_url_keeps_original_if_redirect_requires_login(self):
+        class FakeResponse:
+            url = "https://www.facebook.com/login/?next=%2Fposts%2F123"
+            def close(self):
+                pass
+        class FakeSession:
+            def __init__(self):
+                self.headers = {}
+                self.cookies = type("Cookies", (), {"update": lambda self, jar: None})()
+            def get(self, *args, **kwargs):
+                return FakeResponse()
+        with patch("requests.Session", return_value=FakeSession()):
+            original = "https://www.facebook.com/share/p/shortcode/"
+            self.assertEqual(core._resolve_facebook_share_url(original), original)
 
     def test_extract_urls_removes_trailing_punctuation(self):
         self.assertEqual(
