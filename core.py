@@ -483,7 +483,9 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log, on_progr
     except (NeedLogin, DownloadError):
         raise
     except Exception as exc:
-        raise DownloadError(platform_name + " extraction failed: " + str(exc)) from exc
+        detail = type(exc).__name__ + ": " + repr(exc)
+        log(platform_name + " gallery-dl exception detail: " + detail[:1000])
+        raise DownloadError(platform_name + " extraction failed: " + detail[:700]) from exc
     finally:
         logger.removeHandler(handler)
         logger.setLevel(old_level)
@@ -654,13 +656,31 @@ def run(url, root, cookies_file, log, on_progress=None):
             try:
                 return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
             except Exception as gallery_error:
-                log("Facebook photo-post extraction failed; trying yt-dlp: " + repr(gallery_error))
-                return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
+                log("Facebook photo-post gallery-dl failed: " + repr(gallery_error))
+                try:
+                    return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
+                except Exception as ytdlp_error:
+                    log("Facebook photo-post yt-dlp failed: " + repr(ytdlp_error))
+                    raise DownloadError(
+                        "Facebook photo post failed. gallery-dl [" +
+                        type(gallery_error).__name__ + "]: " + repr(gallery_error)[:500] +
+                        " | yt-dlp [" + type(ytdlp_error).__name__ + "]: " +
+                        repr(ytdlp_error)[:500]
+                    ) from ytdlp_error
         try:
             return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
         except Exception as ytdlp_error:
             log("Facebook yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
-            return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
+            try:
+                return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
+            except Exception as gallery_error:
+                log("Facebook gallery-dl fallback failed: " + repr(gallery_error))
+                raise DownloadError(
+                    "Facebook reel/video failed. yt-dlp [" +
+                    type(ytdlp_error).__name__ + "]: " + repr(ytdlp_error)[:500] +
+                    " | gallery-dl [" + type(gallery_error).__name__ + "]: " +
+                    repr(gallery_error)[:500]
+                ) from gallery_error
     if platform_name == "tiktok":
         try:
             return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
