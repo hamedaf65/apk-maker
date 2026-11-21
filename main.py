@@ -1,5 +1,6 @@
-"""Social Downloader - Android (Kivy) UI. Creator: Hamed Afshari."""
+"""SociaSave — Android social media downloader by Hamed AI."""
 import os
+import shutil
 import threading
 import time
 import webbrowser
@@ -7,16 +8,24 @@ import webbrowser
 import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.app import App
+from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Triangle
+from kivy.metrics import dp
+from kivy.properties import NumericProperty
+from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelItem
 from kivy.uix.textinput import TextInput
+from kivy.uix.widget import Widget
+from kivy.uix.behaviors import ButtonBehavior
+from kivy.graphics import Rectangle
 from kivy.utils import platform
 
 import core
@@ -36,13 +45,12 @@ def fa(text):
 
 
 if platform == "android":
-    from android.permissions import Permission, request_permissions
     from android.runnable import run_on_ui_thread
     from jnius import autoclass
     PythonActivity = autoclass("org.kivy.android.PythonActivity")
-    BASE = "/storage/emulated/0/Download/SocialDownloader"
+    BASE = "/storage/emulated/0/Download/SociaSave"
 else:
-    BASE = os.path.join(os.path.expanduser("~"), "SocialDownloader")
+    BASE = os.path.join(os.path.expanduser("~"), "SociaSave")
 
     def run_on_ui_thread(f):
         return f
@@ -60,98 +68,482 @@ def open_url(url):
         webbrowser.open(url)
 
 
+class RoundedButton(Button):
+    def __init__(self, text="", fill=(0.39, 0.16, 0.90, 1), **kw):
+        self.fill = fill
+        kw.setdefault("background_normal", "")
+        kw.setdefault("background_down", "")
+        kw.setdefault("background_color", (0, 0, 0, 0))
+        kw.setdefault("color", (1, 1, 1, 1))
+        kw.setdefault("font_size", "15sp")
+        super().__init__(text=text, font_name=FONT, **kw)
+        with self.canvas.before:
+            self._fill_color = Color(*self.fill)
+            self._rounded = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+        self.bind(pos=self._sync_shape, size=self._sync_shape, disabled=self._sync_fill)
+
+    def _sync_shape(self, *_):
+        self._rounded.pos = self.pos
+        self._rounded.size = self.size
+
+    def _sync_fill(self, *_):
+        self._fill_color.rgba = (0.72, 0.70, 0.79, 1) if self.disabled else self.fill
+
+    def set_fill(self, value):
+        self.fill = value
+        self._sync_fill()
+
+
+class DownloadProgressBar(Widget):
+    """Blue horizontal progress meter with a centered, readable percentage."""
+    value = NumericProperty(0)
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.percent_label = Label(
+            text="0%", font_name=FONT, font_size="16sp", bold=True,
+            color=(1, 1, 1, 1), size_hint=(None, None),
+            halign="center", valign="middle")
+        self.percent_label.size = (dp(64), dp(30))
+        with self.percent_label.canvas.before:
+            Color(0.04, 0.16, 0.48, 1)
+            self._percent_bg = RoundedRectangle(
+                pos=self.percent_label.pos, size=self.percent_label.size,
+                radius=[dp(8)])
+        self.percent_label.bind(pos=self._sync_percent_bg,
+                                size=self._sync_percent_bg)
+        self.add_widget(self.percent_label)
+        self.bind(pos=self.redraw, size=self.redraw, value=self.redraw)
+        self.redraw()
+
+    def _sync_percent_bg(self, *_):
+        self._percent_bg.pos = self.percent_label.pos
+        self._percent_bg.size = self.percent_label.size
+
+    def set_unknown(self):
+        self.percent_label.text = "—"
+
+    def redraw(self, *_):
+        self.canvas.clear()
+        value = max(0.0, min(100.0, float(self.value)))
+        with self.canvas:
+            Color(0.86, 0.89, 0.96, 1)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(11)])
+            fill_width = self.width * value / 100.0
+            if fill_width > 0:
+                Color(0.04, 0.29, 0.82, 1)
+                RoundedRectangle(
+                    pos=self.pos, size=(fill_width, self.height),
+                    radius=[dp(11)])
+        self.percent_label.text = str(int(round(value))) + "%"
+        self.percent_label.center = self.center
+        self.percent_label.size = (dp(64), min(dp(30), self.height - dp(6)))
+        self._sync_percent_bg()
+
+
 def button(text, **kw):
-    return Button(text=fa(text), font_name=FONT, **kw)
+    value = fa(text) if any("\u0600" <= ch <= "\u06ff" for ch in text) else text
+    return RoundedButton(text=value, **kw)
 
 
 def label(text, height=36, halign="right", **kw):
-    lb = Label(text=fa(text), font_name=FONT, size_hint_y=None, height=height, halign=halign, **kw)
-    lb.bind(size=lambda w, s: setattr(w, "text_size", (s[0], None)))
+    value = fa(text) if any("\u0600" <= ch <= "\u06ff" for ch in text) else text
+    lb = Label(text=value, font_name=FONT, size_hint_y=None, height=height, halign=halign, **kw)
+    lb.bind(size=lambda w, size: setattr(w, "text_size", (size[0], None)))
     return lb
+
+
+class SoftCard(BoxLayout):
+    def __init__(self, fill=(1, 1, 1, 0.94), radius=dp(22), **kw):
+        super().__init__(**kw)
+        self.fill = fill
+        self.corner_radius = radius
+        with self.canvas.before:
+            self._card_color = Color(*self.fill)
+            self._card_rect = RoundedRectangle(pos=self.pos, size=self.size,
+                                                radius=[self.corner_radius])
+            self._border_color = Color(0.78, 0.70, 0.98, 0.72)
+            self._border = Line(rounded_rectangle=(self.x, self.y, self.width,
+                                                   self.height, self.corner_radius), width=1.1)
+        self.bind(pos=self._sync_card, size=self._sync_card)
+
+    def _sync_card(self, *_):
+        self._card_rect.pos = self.pos
+        self._card_rect.size = self.size
+        self._border.rounded_rectangle = (self.x, self.y, self.width, self.height, self.corner_radius)
+
+
+class LightPopup(Popup):
+    """Consistent high-contrast lavender style for every app notification."""
+    ALERT_BG = (0.97, 0.95, 1, 1)  # opaque near-white lavender
+    ALERT_TEXT = (0.15, 0.12, 0.34, 1)  # same dark purple as the Downloads button
+    ALERT_FONT = "16sp"  # consistent readable size across every popup
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("background", "")
+        kwargs.setdefault("background_color", self.ALERT_BG)
+        super().__init__(**kwargs)
+        self._apply_alert_style(self.content)
+        with self.canvas.before:
+            Color(*self.ALERT_BG)
+            self._light_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(24)])
+            Color(0.72, 0.63, 0.91, 0.95)
+            self._light_border = Line(
+                rounded_rectangle=(self.x, self.y, self.width, self.height, dp(24)),
+                width=1.0)
+        self.bind(pos=self._sync_light_bg, size=self._sync_light_bg)
+
+    def _apply_alert_style(self, widget):
+        if widget is None:
+            return
+        if isinstance(widget, Label):
+            widget.color = self.ALERT_TEXT
+            widget.font_name = FONT
+            widget.font_size = self.ALERT_FONT
+        if isinstance(widget, Button) and not getattr(widget, "preserve_popup_style", False):
+            widget.color = self.ALERT_TEXT
+            widget.font_name = FONT
+            widget.font_size = self.ALERT_FONT
+            if isinstance(widget, RoundedButton):
+                widget.set_fill(self.ALERT_BG)
+        for child in getattr(widget, "children", []):
+            self._apply_alert_style(child)
+
+    def open(self, *args, **kwargs):
+        # Some dialogs add their buttons after constructing the Popup.
+        # Apply the shared palette immediately before displaying it.
+        self._apply_alert_style(self.content)
+        return super().open(*args, **kwargs)
+
+    def _sync_light_bg(self, *_):
+        self._light_bg.pos = self.pos
+        self._light_bg.size = self.size
+        self._light_border.rounded_rectangle = (
+            self.x, self.y, self.width, self.height, dp(24))
+
+
+class PlatformTile(BoxLayout):
+    def __init__(self, symbol, name, fill, **kwargs):
+        super().__init__(orientation="vertical", spacing=dp(2),
+                         padding=(dp(3), dp(7)), **kwargs)
+        with self.canvas.before:
+            Color(*fill)
+            self._tile_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
+        self.bind(pos=self._sync_tile, size=self._sync_tile)
+        self.add_widget(Label(text=symbol, font_name=FONT, font_size="27sp",
+                              bold=True, color=(1, 1, 1, 1)))
+        self.add_widget(Label(text=name, font_name=FONT, font_size="10sp",
+                              color=(1, 1, 1, 1), size_hint_y=None, height=dp(17)))
+
+    def _sync_tile(self, *_):
+        self._tile_bg.pos = self.pos
+        self._tile_bg.size = self.size
+
+
+class SocialBanner(BoxLayout):
+    """Seven-platform banner in a contained two-row layout."""
+    def __init__(self, **kwargs):
+        super().__init__(orientation="vertical", spacing=dp(7),
+                         padding=(dp(9), dp(9)), **kwargs)
+        with self.canvas.before:
+            Color(1, 1, 1, 0.96)
+            self._banner_bg = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(23)])
+            Color(0.78, 0.69, 0.96, 0.72)
+            self._banner_border = Line(
+                rounded_rectangle=(self.x, self.y, self.width, self.height, dp(23)),
+                width=1.1)
+        self.bind(pos=self._sync_banner, size=self._sync_banner)
+        first = BoxLayout(orientation="horizontal", spacing=dp(7))
+        second = BoxLayout(orientation="horizontal", spacing=dp(7))
+        for symbol, name, fill in [
+            ("◎", "Instagram", (0.78, 0.18, 0.54, 1)),
+            ("X", "X", (0.10, 0.11, 0.14, 1)),
+            ("▶", "YouTube", (0.87, 0.12, 0.16, 1)),
+            ("f", "Facebook", (0.13, 0.38, 0.77, 1)),
+        ]:
+            first.add_widget(PlatformTile(symbol, name, fill))
+        for symbol, name, fill in [
+            ("♪", "TikTok", (0.08, 0.08, 0.10, 1)),
+            ("P", "Pinterest", (0.76, 0.08, 0.18, 1)),
+            ("@", "Threads*", (0.20, 0.20, 0.23, 1)),
+        ]:
+            second.add_widget(PlatformTile(symbol, name, fill))
+        second.add_widget(Widget())
+        self.add_widget(first)
+        self.add_widget(second)
+
+    def _sync_banner(self, *_):
+        self._banner_bg.pos = self.pos
+        self._banner_bg.size = self.size
+        self._banner_border.rounded_rectangle = (
+            self.x, self.y, self.width, self.height, dp(23))
+
+
+class ContactAction(ButtonBehavior, BoxLayout):
+    def __init__(self, icon, icon_color, title, subtitle, url, **kw):
+        super().__init__(orientation="horizontal", padding=(dp(16), dp(10)),
+                         spacing=dp(14), size_hint_y=None, height=dp(92), **kw)
+        with self.canvas.before:
+            Color(1, 1, 1, 0.97)
+            self._card = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(20)])
+            Color(0.79, 0.71, 0.98, 0.8)
+            self._outline = Line(rounded_rectangle=(self.x, self.y, self.width,
+                                                    self.height, dp(20)), width=1.1)
+        self.bind(pos=self._sync, size=self._sync)
+        icon_box = BoxLayout(size_hint=(None, 1), width=dp(62), padding=dp(4))
+        with icon_box.canvas.before:
+            Color(*icon_color)
+            self._icon_bg = Ellipse(pos=icon_box.pos, size=icon_box.size)
+        icon_box.bind(pos=lambda w, *_: setattr(self._icon_bg, "pos", w.pos),
+                      size=lambda w, *_: setattr(self._icon_bg, "size", w.size))
+        icon_label = Label(text=icon, font_size="32sp", bold=True,
+                           color=(1, 1, 1, 1), halign="center", valign="middle")
+        icon_box.add_widget(icon_label)
+        self.add_widget(icon_box)
+
+        texts = BoxLayout(orientation="vertical", spacing=dp(3), padding=(0, dp(5)))
+        texts.add_widget(label(title, height=dp(30), halign="left",
+                               font_size="17sp", bold=True, color=(0.10, 0.10, 0.27, 1)))
+        texts.add_widget(label(subtitle, height=dp(30), halign="left",
+                               font_size="13sp", color=(0.40, 0.39, 0.52, 1)))
+        self.add_widget(texts)
+        self.url = url
+        self.bind(on_release=lambda *_: open_url(self.url))
+
+    def _sync(self, *_):
+        self._card.pos = self.pos
+        self._card.size = self.size
+        self._outline.rounded_rectangle = (self.x, self.y, self.width, self.height, dp(20))
 
 
 class Root(BoxLayout):
     def __init__(self, user_dir, **kw):
-        super().__init__(orientation="vertical", padding=10, spacing=6, **kw)
+        safe_top = dp(30) if platform == "android" else 0
+        safe_bottom = dp(36) if platform == "android" else 0
+        super().__init__(orientation="vertical",
+                         padding=(0, safe_top, 0, safe_bottom), spacing=0, **kw)
         self.user_dir = user_dir
         self.cookies_path = os.path.join(user_dir, "ig_cookies.txt")
+        self.log_path = os.path.join(user_dir, "downloader-internal.log")
+        self.download_root = os.path.join(user_dir, "downloads")
         self.busy = False
         self.wv = None
+        self.login_open = False
+        self.login_platform = None
+        self.status_popup = None
+        self.status_progress = None
+        self.status_title = None
+        self.status_detail = None
+        self.status_close_btn = None
+        self.current_view = None
+        self.status_open_btn = None
+        Window.clearcolor = (0.975, 0.965, 1, 1)
+        with self.canvas.before:
+            Color(0.975, 0.965, 1, 1)
+            self._background = Rectangle(pos=self.pos, size=self.size)
+            Color(0.88, 0.79, 1, 0.30)
+            self._blob_top = Ellipse()
+            Color(1, 0.77, 0.70, 0.22)
+            self._blob_bottom = Ellipse()
+        self.bind(pos=self._sync_background, size=self._sync_background)
+        if platform == "android":
+            try:
+                native_dir = str(PythonActivity.mActivity.getApplicationInfo().nativeLibraryDir)
+                os.environ["SOCIASAVE_NATIVE_LIB_DIR"] = native_dir
+                Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+                Storage.ensureSociaSaveFolder(PythonActivity.mActivity)
+            except Exception as exc:
+                self.log("Could not initialize public SociaSave folder: " + repr(exc))
+        self.main_view = self.build_download()
+        self.contact_view = self.build_contact()
+        self.show_main()
+        Clock.schedule_once(lambda _dt: self.show_startup_notice(), 0.7)
 
-        # ---- header: "سازنده: حامد افشاری" (the name is a link to the About tab)
-        self.header = Label(
-            text="[ref=about][color=4da6ff][u]%s[/u][/color][/ref]  %s" % (fa("حامد افشاری"), fa("سازنده:")),
-            markup=True, font_name=FONT, size_hint_y=None, height=40, halign="right", font_size="16sp")
-        self.header.bind(size=lambda w, s: setattr(w, "text_size", (s[0], None)))
-        self.header.bind(on_ref_press=lambda *_: self.tabs.switch_to(self.about_tab))
-        self.add_widget(self.header)
+    def show_startup_notice(self):
+        """Show the network-access reminder on every fresh app launch."""
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        header = SoftCard(orientation="vertical", fill=(0.92, 0.82, 0.98, 1),
+                          padding=(dp(8), 0), radius=dp(12),
+                          size_hint_y=None, height=dp(38))
+        header.add_widget(label("Welcome to SociaSave", height=dp(36),
+                                halign="center", font_size="16sp", bold=True))
+        panel.add_widget(header)
+        message = Label(
+            text=("Due to access restrictions affecting some social media platforms, "
+                  "a VPN may be required for SociaSave to work properly. "
+                  "Please connect your VPN before downloading."),
+            font_name=FONT, font_size="16sp", color=LightPopup.ALERT_TEXT,
+            size_hint_y=None, height=dp(118), halign="center", valign="middle")
+        message.bind(size=lambda widget, size: setattr(widget, "text_size", size))
+        panel.add_widget(message)
+        accept = button("Continue", size_hint_y=None, height=dp(48),
+                        fill=(0.08, 0.06, 0.30, 1),
+                        color=(1.0, 1.0, 1.0, 1.0),
+                        font_size="16sp", bold=True)
+        accept.preserve_popup_style = True
+        panel.add_widget(accept)
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(270), auto_dismiss=False)
+        accept.bind(on_release=popup.dismiss)
+        popup.open()
 
-        self.tabs = TabbedPanel(do_default_tab=False, tab_width=170)
-        self.dl_tab = TabbedPanelItem(text=fa("دانلود"), font_name=FONT)
-        self.about_tab = TabbedPanelItem(text=fa("درباره ما"), font_name=FONT)
-        self.dl_tab.add_widget(self.build_download())
-        self.about_tab.add_widget(self.build_about())
-        self.tabs.add_widget(self.dl_tab)
-        self.tabs.add_widget(self.about_tab)
-        self.tabs.switch_to(self.dl_tab)
-        self.add_widget(self.tabs)
+    def _sync_background(self, *_):
+        self._background.pos = self.pos
+        self._background.size = self.size
+        self._blob_top.pos = (self.x - dp(90), self.top - dp(230))
+        self._blob_top.size = (self.width * 0.78, dp(300))
+        self._blob_bottom.pos = (self.right - self.width * 0.55, self.y - dp(160))
+        self._blob_bottom.size = (self.width * 0.75, dp(260))
 
-    # ------------------------------------------------------------ tabs
+    def show_main(self):
+        if self.current_view is not None:
+            self.remove_widget(self.current_view)
+        self.current_view = self.main_view
+        self.add_widget(self.main_view)
+
+    def show_contact(self):
+        if self.current_view is not None:
+            self.remove_widget(self.current_view)
+        self.current_view = self.contact_view
+        self.add_widget(self.contact_view)
+
+    def _make_scroll_page(self, padding=(dp(18), dp(12))):
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(3),
+                            scroll_type=["bars", "content"])
+        content = BoxLayout(orientation="vertical", padding=padding,
+                            spacing=dp(12), size_hint_y=None)
+        content.bind(minimum_height=content.setter("height"))
+        scroll.add_widget(content)
+        return scroll, content
+
+    # ------------------------------------------------------------ pages
     def build_download(self):
-        box = BoxLayout(orientation="vertical", padding=6, spacing=8)
-        box.add_widget(label("لینک پست اینستاگرام یا ویدئوی یوتیوب را اینجا بچسبانید"))
-        self.url = TextInput(multiline=True, size_hint_y=None, height=100)
-        box.add_widget(self.url)
+        scroll, content = self._make_scroll_page()
+        hero = BoxLayout(orientation="vertical", spacing=dp(5),
+                         size_hint_y=None, height=dp(232))
+        brand_mark = SocialBanner(size_hint_y=None, height=dp(140))
+        brand = Label(text="[color=151A3D][b]Socia[/b][/color][color=8A27DD][b]Save[/b][/color]",
+                      markup=True, font_name=FONT, font_size="31sp",
+                      size_hint_y=None, height=dp(42))
+        tagline = label("Downloading content from social media networks",
+                        height=dp(34), halign="center", font_size="13sp",
+                        color=(0.34, 0.33, 0.49, 1))
+        hero.add_widget(brand_mark)
+        hero.add_widget(brand)
+        hero.add_widget(tagline)
+        content.add_widget(hero)
 
-        row = BoxLayout(size_hint_y=None, height=48, spacing=8)
-        b1 = button("چسباندن")
-        b1.bind(on_release=lambda *_: self.paste())
-        b2 = button("پاک کردن")
-        b2.bind(on_release=lambda *_: setattr(self.url, "text", ""))
-        row.add_widget(b1)
-        row.add_widget(b2)
-        box.add_widget(row)
+        input_card = SoftCard(orientation="vertical", padding=(dp(15), dp(13)),
+                              spacing=dp(8), size_hint_y=None, height=dp(190))
+        input_card.add_widget(label("Paste the post you'd like to share from any platform\nLink address:",
+                                    height=dp(50), halign="center", font_size="13sp",
+                                    color=(0.13, 0.13, 0.31, 1)))
+        self.url = TextInput(
+            multiline=False, size_hint_y=None, height=dp(68),
+            hint_text="Paste your link here...",
+            background_normal="", background_active="",
+            background_color=(0.98, 0.97, 1, 1),
+            foreground_color=(0.13, 0.13, 0.29, 1),
+            hint_text_color=(0.55, 0.53, 0.66, 1),
+            cursor_color=(0.48, 0.19, 0.91, 1),
+            padding=(dp(14), dp(20)), font_size="15sp",
+            selection_color=(0.72, 0.62, 0.98, 0.55))
+        input_card.add_widget(self.url)
+        tools_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        clear_button = button("Delete", fill=(0.94, 0.91, 1, 1),
+                              color=(0.17, 0.14, 0.36, 1), size_hint_x=1)
+        clear_button.bind(on_release=lambda *_: setattr(self.url, "text", ""))
+        paste_button = button("Paste", fill=(0.94, 0.91, 1, 1),
+                              color=(0.17, 0.14, 0.36, 1), size_hint_x=1)
+        paste_button.bind(on_release=lambda *_: self.paste())
+        tools_row.add_widget(clear_button)
+        tools_row.add_widget(paste_button)
+        input_card.add_widget(tools_row)
+        content.add_widget(input_card)
 
-        self.btn = button("دانلود", size_hint_y=None, height=60, font_size="20sp")
+        self.btn = button("↓   Download Content", size_hint_y=None, height=dp(60),
+                          font_size="19sp", bold=True, fill=(0.56, 0.18, 0.92, 1))
         self.btn.bind(on_release=lambda *_: self.start())
-        box.add_widget(self.btn)
+        content.add_widget(self.btn)
 
-        self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=14)
-        box.add_widget(self.bar)
+        self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=1, opacity=0)
+        content.add_widget(self.bar)
 
-        self.login_btn = button("ورود به اینستاگرام (فقط برای پیج‌های خصوصی)", size_hint_y=None, height=44)
+        connect_row = BoxLayout(size_hint_y=None, height=dp(68), spacing=dp(9))
+        self.login_btn = button("◎   Connect to Instagram", fill=(0.94, 0.89, 1, 1),
+                                color=(0.15, 0.12, 0.34, 1), font_size="13sp")
         self.login_btn.bind(on_release=lambda *_: self.instagram_login())
-        box.add_widget(self.login_btn)
+        self.youtube_btn = button("＋   Connect More Accounts", fill=(0.94, 0.91, 1, 1),
+                                  color=(0.15, 0.12, 0.34, 1), font_size="13sp")
+        self.youtube_btn.bind(on_release=lambda *_: self.connect_other_accounts())
+        connect_row.add_widget(self.login_btn)
+        connect_row.add_widget(self.youtube_btn)
+        content.add_widget(connect_row)
 
-        self.logview = Label(text="", size_hint_y=None, halign="left", valign="top", font_name=FONT)
-        self.logview.bind(width=lambda *_: setattr(self.logview, "text_size", (self.logview.width, None)))
-        self.logview.bind(texture_size=lambda *_: setattr(self.logview, "height", self.logview.texture_size[1]))
-        sv = ScrollView()
-        sv.add_widget(self.logview)
-        box.add_widget(sv)
-        self.log(fa("ذخیره در: Download/SocialDownloader"))
-        return box
+        self.files_btn = button("▣   Location for saved downloaded files", fill=(0.93, 0.89, 1, 1),
+                                color=(0.15, 0.12, 0.34, 1),
+                                size_hint_y=None, height=dp(58), font_size="16sp")
+        self.files_btn.bind(on_release=lambda *_: self.show_downloads())
+        content.add_widget(self.files_btn)
 
-    def build_about(self):
-        box = BoxLayout(orientation="vertical", padding=16, spacing=14)
-        box.add_widget(label("دانلودر اینستاگرام و یوتیوب", height=44, font_size="20sp", halign="center"))
-        box.add_widget(label("سازنده: حامد افشاری", halign="center"))
-        box.add_widget(label("ارتباط با ما:", halign="center"))
+        credit = Label(text="[color=47425F]Developed by [/color][color=7521D6][b]Hamed AI[/b][/color]",
+                       markup=True, font_name=FONT, size_hint_y=None, height=dp(34),
+                       font_size="14sp")
+        content.add_widget(credit)
+        contact = button("Contact Us", fill=(1, 1, 1, 1),
+                         color=(0.42, 0.15, 0.82, 1),
+                         size_hint_y=None, height=dp(44), font_size="15sp")
+        contact.bind(on_release=lambda *_: self.show_contact())
+        content.add_widget(contact)
+        content.add_widget(Widget(size_hint_y=None, height=dp(8)))
+        return scroll
 
-        for text, url in (("کانال تلگرام", TELEGRAM_URL), ("صفحه اینستاگرام", INSTAGRAM_URL)):
-            lb = Label(text="[ref=x][color=4da6ff][u]%s[/u][/color][/ref]" % fa(text), markup=True,
-                       font_name=FONT, size_hint_y=None, height=48, font_size="18sp")
-            lb.bind(on_ref_press=lambda inst, ref, u=url: open_url(u))
-            box.add_widget(lb)
-        box.add_widget(Label())  # spacer
-        return box
+    def build_contact(self):
+        scroll, content = self._make_scroll_page(padding=(dp(18), dp(18)))
+        back = button("←   Back", fill=(0.94, 0.91, 1, 1),
+                      color=(0.18, 0.14, 0.38, 1),
+                      size_hint_y=None, height=dp(48), size_hint_x=0.42)
+        back.bind(on_release=lambda *_: self.show_main())
+        content.add_widget(back)
+        content.add_widget(label("Contact Us", height=dp(54), halign="center",
+                                 font_size="27sp", color=(0.13, 0.12, 0.31, 1)))
+        content.add_widget(label("برای ارتباط، از راه‌های زیر با من در تماس باشید",
+                                 height=dp(46), halign="center", font_size="14sp",
+                                 color=(0.36, 0.34, 0.51, 1)))
+        telegram = ContactAction("➤", (0.13, 0.62, 0.88, 1),
+                                 "Telegram Channel", "برای ارتباط از طریق تلگرام",
+                                 TELEGRAM_URL)
+        instagram = ContactAction("◎", (0.79, 0.20, 0.66, 1),
+                                  "Instagram Page", "برای مشاهده صفحه اینستاگرام",
+                                  "https://www.instagram.com/hamedafshar.ir/")
+        content.add_widget(telegram)
+        content.add_widget(instagram)
+        content.add_widget(Widget(size_hint_y=None, height=dp(18)))
+        content.add_widget(label("Developed by Hamed AI", height=dp(34),
+                                 halign="center", color=(0.48, 0.23, 0.80, 1)))
+        return scroll
 
     # ----------------------------------------------------------- helpers
     def log(self, msg):
-        Clock.schedule_once(lambda dt: setattr(self.logview, "text", (self.logview.text + "\n" + str(msg)).strip()))
+        # Technical reports stay in app-private storage; never put them on screen.
+        try:
+            os.makedirs(self.user_dir, exist_ok=True)
+            if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 512 * 1024:
+                os.remove(self.log_path)
+            with open(self.log_path, "a", encoding="utf-8") as handle:
+                handle.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)[:1200] + "\n")
+        except Exception:
+            pass
 
-    def progress(self, v):
-        Clock.schedule_once(lambda dt: setattr(self.bar, "value", v))
+    def progress(self, value):
+        def update(_dt):
+            if not self.status_progress:
+                return
+            if value is None:
+                self.status_progress.set_unknown()
+            else:
+                self.status_progress.value = max(0.0, min(100.0, float(value)))
+        Clock.schedule_once(update, 0)
 
     def paste(self):
         try:
@@ -160,9 +552,9 @@ class Root(BoxLayout):
             pass
 
     def receive_shared(self, text):
-        """Link shared from the Instagram / YouTube app into this app."""
+        """Link shared from a supported platform into SociaSave."""
+        self.show_main()
         self.url.text = text
-        self.tabs.switch_to(self.dl_tab)
         self.start()
 
     # ---------------------------------------------------------- download
@@ -173,113 +565,331 @@ class Root(BoxLayout):
         if not urls:
             self.log(fa("لینکی پیدا نشد."))
             return
-        root = BASE
+        # Downloads are staged privately, then exported through Android MediaStore
+        # to the public Download/SociaSave folder using the original post hierarchy.
+        root = os.path.join(self.user_dir, "socia_save_staging")
         try:
             os.makedirs(root, exist_ok=True)
-            test = os.path.join(root, ".w")
-            open(test, "w").close()
-            os.remove(test)
-        except Exception:
-            root = os.path.join(self.user_dir, "downloads")
-            os.makedirs(root, exist_ok=True)
-            self.log(fa("اجازه ذخیره در Download داده نشد. محل ذخیره:") + " " + root)
+        except Exception as exc:
+            self.log("Could not create app download folder: " + repr(exc))
+            return
         self.busy = True
         self.btn.disabled = True
+        self.download_root = root
+        self.show_processing()
         threading.Thread(target=self.work, args=(urls, root), daemon=True).start()
 
     def work(self, urls, root):
-        has_cookies = os.path.exists(self.cookies_path)
-        for i, u in enumerate(urls, 1):
-            self.log("--- (%d/%d)" % (i, len(urls)))
-            self.progress(0)
+        successes, failures = [], []
+        total = len(urls)
+        for index, url in enumerate(urls, 1):
+            self.log("Starting: " + url)
             try:
+                platform_name = core.detect_platform(url)
+                cookies_path = self._cookie_file(platform_name)
+                cookies = cookies_path if os.path.isfile(cookies_path) else None
+                def on_progress(value, current=index):
+                    if value is None:
+                        self.progress(None)
+                        return
+                    overall = ((current - 1) + max(0, min(100, float(value))) / 100.0) * 100.0 / total
+                    self.progress(overall)
+                destination = core.run(url, root, cookies, self.log, on_progress)
+                if not destination or not os.path.isdir(destination):
+                    raise RuntimeError("Downloader returned no saved folder.")
+                if platform == "android":
+                    Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+                    relative_dir = os.path.relpath(destination, root).replace(os.sep, "/")
+                    exported = Storage.exportDirectory(
+                        PythonActivity.mActivity, destination, relative_dir)
+                    if not exported:
+                        raise RuntimeError("Android could not export files to Download/SociaSave.")
+                    self.log("Exported files to Download/SociaSave/" + relative_dir)
+                    shutil.rmtree(destination, ignore_errors=True)
+                successes.append(destination)
+                self.progress(index * 100.0 / total)
+                self.log("Completed: " + destination)
+            except Exception as exc:
+                self.log("Failure: " + repr(exc))
                 try:
-                    core.run(u, root, None, self.log, self.progress)          # public post: no login
-                except core.NeedLogin:
-                    if has_cookies:
-                        self.log(fa("در حال تلاش با حساب اینستاگرام شما ..."))
-                        core.run(u, root, self.cookies_path, self.log, self.progress)
-                    else:
-                        raise
-                self.log(fa("✔ دانلود تمام شد."))
-            except core.NeedLogin:
-                self.log(fa("این پست خصوصی است یا اینستاگرام ورود می‌خواهد."))
-                self.log(fa("دکمه «ورود به اینستاگرام» را بزنید و یک بار وارد شوید."))
-            except Exception as e:
-                self.log(fa("خطا:") + " %s" % e)
-        self.progress(100)
-        Clock.schedule_once(lambda dt: (setattr(self, "busy", False), setattr(self.btn, "disabled", False)))
+                    failures.append(core.friendly_error(url, exc))
+                except Exception:
+                    failures.append("Download failed. Check the link and try again.")
+        Clock.schedule_once(lambda dt: self.finish_download(successes, failures))
 
-    # ------------------------------------------ Instagram login (private)
+    def show_processing(self):
+        if self.status_popup:
+            self.status_popup.dismiss()
+        panel = BoxLayout(orientation="vertical", padding=(dp(20), dp(18)), spacing=dp(10))
+        self.status_progress = DownloadProgressBar(
+            size_hint=(1, None), height=dp(46))
+        self.status_progress.value = 0
+        self.status_title = Label(
+            text="Downloading...", font_name=FONT, font_size="19sp",
+            color=(0.12, 0.10, 0.26, 1), size_hint_y=None, height=dp(36))
+        self.status_detail = Label(
+            text="The percentage shows the current media file's download progress.",
+            font_name=FONT, font_size="13sp", color=(0.36, 0.34, 0.49, 1),
+            size_hint_y=None, height=dp(58), halign="center", valign="middle")
+        self.status_detail.bind(size=lambda widget, size: setattr(widget, "text_size", size))
+        self.status_open_btn = button(
+            "Open Download Folder", size_hint_y=None, height=dp(48),
+            fill=(0.02, 0.42, 0.16, 1), color=(1.0, 1.0, 1.0, 1.0),
+            bold=True)
+        self.status_open_btn.preserve_popup_style = True
+        self.status_open_btn.disabled = True
+        self.status_open_btn.opacity = 0
+        self.status_open_btn.bind(on_release=lambda *_: self.show_downloads())
+        self.status_close_btn = button(
+            "Close", size_hint_y=None, height=dp(46),
+            fill=(0.93, 0.89, 1, 1), color=(0.20, 0.14, 0.36, 1))
+        self.status_close_btn.disabled = True
+        self.status_close_btn.bind(on_release=lambda *_: self.dismiss_status())
+        panel.add_widget(self.status_progress)
+        panel.add_widget(self.status_title)
+        panel.add_widget(self.status_detail)
+        panel.add_widget(self.status_open_btn)
+        panel.add_widget(self.status_close_btn)
+        self.status_popup = LightPopup(
+            title="", content=panel, size_hint=(0.88, None), height=dp(285),
+            auto_dismiss=False, separator_height=0,
+            background="", background_color=LightPopup.ALERT_BG)
+        self.status_popup.open()
+
+    def finish_download(self, successes, failures):
+        self.busy = False
+        self.btn.disabled = False
+        if successes:
+            if not failures and self.status_progress:
+                self.status_progress.value = 100
+            self.status_title.text = "Download complete"
+            if failures:
+                self.status_detail.text = str(len(successes)) + " file(s) saved; " + str(len(failures)) + " failed."
+            else:
+                self.status_detail.text = "The file was saved successfully."
+            self.status_open_btn.disabled = False
+            self.status_open_btn.opacity = 1
+            self.files_btn.text = "★   Location for saved downloaded files"
+            self.files_btn.set_fill((0.83, 0.97, 0.87, 1))
+        else:
+            self.status_open_btn.disabled = True
+            self.status_open_btn.opacity = 0
+            self.status_title.text = "Download failed"
+            self.status_detail.text = failures[0] if failures else "Download failed. Please check the link and try again."
+        self.status_close_btn.disabled = False
+
+    def dismiss_status(self):
+        if self.status_popup:
+            self.status_popup.dismiss()
+            self.status_popup = None
+
+    def connect_other_accounts(self):
+        panel = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
+        heading = SoftCard(orientation="vertical", fill=(0.92, 0.82, 0.98, 1),
+                            padding=(dp(8), 0), radius=dp(12),
+                            size_hint_y=None, height=dp(48))
+        heading.add_widget(label("Optional connection to social media accounts",
+                                 height=dp(46), halign="center", font_size="16sp",
+                                 bold=True))
+        panel.add_widget(heading)
+        choices = [
+            ("Connect to Facebook", "facebook"),
+            ("Connect to TikTok", "tiktok"),
+            ("Connect to Pinterest", "pinterest"),
+        ]
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(420), auto_dismiss=False)
+        for title, platform_name in choices:
+            action = button(title, size_hint_y=None, height=dp(48),
+                            fill=(0.08, 0.06, 0.30, 1),
+                            color=(1.0, 1.0, 1.0, 1.0), bold=True)
+            action.preserve_popup_style = True
+            action.bind(on_release=lambda _btn, name=platform_name:
+                        (popup.dismiss(), self.start_platform_login(name)))
+            panel.add_widget(action)
+        youtube = button("YouTube connection information",
+                         size_hint_y=None, height=dp(48),
+                         fill=(0.08, 0.06, 0.30, 1),
+                         color=(1.0, 1.0, 1.0, 1.0), bold=True)
+        youtube.preserve_popup_style = True
+        youtube.bind(on_release=lambda *_: (popup.dismiss(), self.youtube_connect_info()))
+        panel.add_widget(youtube)
+        threads = label("Threads: downloading is not available yet.",
+                        height=dp(38), halign="center")
+        panel.add_widget(threads)
+        close = button("Close", size_hint_y=None, height=dp(46))
+        close.bind(on_release=popup.dismiss)
+        panel.add_widget(close)
+        popup.open()
+
+    def youtube_connect_info(self):
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        panel.add_widget(label("برای دانلود ویدیوهای عمومی یوتیوب نیازی به اتصال حساب نیست.",
+                               height=dp(66), halign="center", font_size="15sp",
+                               color=(0.12, 0.10, 0.28, 1)))
+        panel.add_widget(label("ورود گوگل در WebView داخلی پشتیبانی نمی‌شود. باز شدن اپ YouTube نیز نشست ورود را به SociaSave منتقل نمی‌کند.",
+                               height=dp(88), halign="center", font_size="13sp",
+                               color=(0.36, 0.34, 0.49, 1)))
+        open_btn = button("Open YouTube", size_hint_y=None, height=dp(50),
+                          fill=(0.87, 0.12, 0.16, 1))
+        close_btn = button("Close", size_hint_y=None, height=dp(50),
+                           fill=(0.93, 0.89, 1, 1),
+                           color=(0.12, 0.10, 0.28, 1))
+        panel.add_widget(open_btn)
+        panel.add_widget(close_btn)
+        popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
+                           height=dp(330), auto_dismiss=False)
+        open_btn.bind(on_release=lambda *_: (popup.dismiss(), open_url("https://www.youtube.com")))
+        close_btn.bind(on_release=popup.dismiss)
+        popup.open()
+
+    def show_downloads(self):
+        if platform == "android":
+            try:
+                Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+                if Storage.openSociaSaveFolder(PythonActivity.mActivity):
+                    return
+            except Exception as exc:
+                self.log("Could not open SociaSave folder in Android file manager: " + repr(exc))
+
+        # Desktop fallback: open the local folder instead of showing an unreadable file list.
+        root = self.download_root
+        os.makedirs(root, exist_ok=True)
+        try:
+            if platform == "win":
+                os.startfile(root)
+            else:
+                open_url("file://" + root)
+        except Exception:
+            self.show_folder_help()
+
+    def show_folder_help(self):
+        panel = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(12))
+        panel.add_widget(label("SociaSave download location", height=dp(40),
+                               halign="center", font_size="18sp",
+                               color=(0.12, 0.10, 0.28, 1)))
+        panel.add_widget(label("Download / SociaSave", height=dp(42),
+                               halign="center", font_size="15sp",
+                               color=(0.42, 0.18, 0.80, 1)))
+        panel.add_widget(label("فایل‌ها پس از دانلود در پوشه عمومی Download گوشی ذخیره می‌شوند.",
+                               height=dp(58), halign="center",
+                               color=(0.35, 0.33, 0.48, 1)))
+        close = button("Close", size_hint_y=None, height=dp(46))
+        panel.add_widget(close)
+        popup = LightPopup(title="", content=panel, size_hint=(0.88, None),
+                           height=dp(235))
+        close.bind(on_release=popup.dismiss)
+        popup.open()
+
+
+    # ------------------------------------------ optional account sessions
+    def _cookie_file(self, platform_name):
+        return os.path.join(self.user_dir, (platform_name or "unknown") + "_cookies.txt")
+
     def instagram_login(self):
+        self.start_platform_login("instagram")
+
+    def start_platform_login(self, platform_name):
         if platform != "android":
             self.log(fa("ورود فقط روی گوشی اندروید پشتیبانی می‌شود."))
             return
-        self.log(fa("وارد اینستاگرام شوید. بعد از ورود، خودکار بسته می‌شود. (دکمه برگشت = انصراف)"))
-        self._open_webview()
-        Clock.schedule_interval(self._poll_login, 1.5)
+        login_urls = {
+            "instagram": "https://www.instagram.com/accounts/login/",
+            "facebook": "https://www.facebook.com/login/",
+            "tiktok": "https://www.tiktok.com/login",
+            "pinterest": "https://www.pinterest.com/login/",
+        }
+        if platform_name not in login_urls:
+            return
+        try:
+            Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+            Storage.openPlatformLogin(PythonActivity.mActivity, login_urls[platform_name])
+            self.login_platform = platform_name
+            self.login_open = True
+            Clock.schedule_interval(self._poll_login, 1.5)
+        except Exception as exc:
+            self.login_open = False
+            self.login_platform = None
+            self.log("Could not open " + platform_name + " login: " + repr(exc))
 
-    @run_on_ui_thread
-    def _open_webview(self):
-        WebView = autoclass("android.webkit.WebView")
-        WebViewClient = autoclass("android.webkit.WebViewClient")
-        LayoutParams = autoclass("android.view.ViewGroup$LayoutParams")
-        act = PythonActivity.mActivity
-        wv = WebView(act)
-        s = wv.getSettings()
-        s.setJavaScriptEnabled(True)
-        s.setDomStorageEnabled(True)
-        wv.setWebViewClient(WebViewClient())
-        wv.loadUrl("https://www.instagram.com/accounts/login/")
-        act.addContentView(wv, LayoutParams(-1, -1))
-        self.wv = wv
-
-    @run_on_ui_thread
     def _close_webview(self):
         try:
-            if self.wv is not None:
-                parent = self.wv.getParent()
-                if parent is not None:
-                    parent.removeView(self.wv)
-                self.wv.destroy()
-        except Exception:
-            pass
-        self.wv = None
+            if platform == "android":
+                Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+                Storage.closeInstagramLogin(PythonActivity.mActivity)
+        except Exception as exc:
+            self.log("Could not close Instagram login view: " + repr(exc))
+        self.login_open = False
+        self.login_platform = None
 
     def _poll_login(self, dt):
-        if self.wv is None:
+        if not self.login_open or not self.login_platform:
             return False
+        platform_name = self.login_platform
+        domains = {
+            "instagram": "https://www.instagram.com",
+            "facebook": "https://www.facebook.com",
+            "tiktok": "https://www.tiktok.com",
+            "pinterest": "https://www.pinterest.com",
+        }
+        markers = {
+            "instagram": ("sessionid=",),
+            "facebook": ("c_user=", "xs="),
+            "tiktok": ("sessionid=", "sid_tt="),
+            "pinterest": ("_pinterest_sess=",),
+        }
         try:
-            CookieManager = autoclass("android.webkit.CookieManager")
-            raw = CookieManager.getInstance().getCookie("https://www.instagram.com") or ""
+            Storage = autoclass("org.hamedafshari.sociasave.SociaSaveStorage")
+            raw = str(Storage.getPlatformCookies(domains[platform_name]) or "")
         except Exception:
             return True
-        if "sessionid=" in raw:
-            expiry = int(time.time()) + 365 * 24 * 3600
+
+        authenticated = all(token in raw for token in markers[platform_name]) if platform_name == "facebook" else any(
+            token in raw for token in markers[platform_name])
+        if authenticated:
+            expiry = int(time.time()) + 180 * 24 * 3600
+            host = domains[platform_name].split("://", 1)[1].removeprefix("www.")
             lines = ["# Netscape HTTP Cookie File"]
             for part in raw.split(";"):
                 if "=" in part:
-                    k, v = part.strip().split("=", 1)
-                    lines.append(".instagram.com\tTRUE\t/\tTRUE\t%d\t%s\t%s" % (expiry, k, v))
-            with open(self.cookies_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
+                    key, value = part.strip().split("=", 1)
+                    if not key:
+                        continue
+                    prefix = "#HttpOnly_" if key.lower() in (
+                        "sessionid", "sid_tt", "c_user", "xs", "_pinterest_sess",
+                        "auth_token", "ct0", "csrftoken") else ""
+                    lines.append("%s.%s\tTRUE\t/\tTRUE\t%d\t%s\t%s" %
+                                 (prefix, host, expiry, key, value))
+            cookie_path = self._cookie_file(platform_name)
+            os.makedirs(self.user_dir, exist_ok=True)
+            with open(cookie_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
             self._close_webview()
-            self.log(fa("✔ ورود انجام شد. حالا لینک پست خصوصی را دانلود کنید."))
+            self.log(fa("✔ ورود انجام شد. نشست حساب به‌صورت خصوصی ذخیره شد."))
             return False
+        try:
+            if not Storage.isInstagramLoginVisible():
+                self.login_open = False
+                return False
+        except Exception:
+            pass
         return True
 
     def on_back(self):
-        """Android back button: close login window if open."""
-        if self.wv is not None:
+        """Android back button: close login view or return from Contact Us."""
+        if self.login_open:
             self._close_webview()
             self.log(fa("ورود لغو شد."))
+            return True
+        if self.current_view is self.contact_view:
+            self.show_main()
             return True
         return False
 
 
-class SocialDownloaderApp(App):
+class SociaSaveApp(App):
     def build(self):
-        self.title = "Social Downloader"
+        self.title = "SociaSave"
         self.root_widget = Root(self.user_data_dir)
         Window.bind(on_keyboard=self.on_key)
         return self.root_widget
@@ -291,7 +901,6 @@ class SocialDownloaderApp(App):
 
     def on_start(self):
         if platform == "android":
-            request_permissions([Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE])
             try:
                 from android import activity
                 activity.bind(on_new_intent=self.handle_intent)
@@ -311,4 +920,4 @@ class SocialDownloaderApp(App):
 
 
 if __name__ == "__main__":
-    SocialDownloaderApp().run()
+    SociaSaveApp().run()

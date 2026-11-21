@@ -1,25 +1,24 @@
 [app]
-title = Social Downloader
-package.name = socialdownloader
+title = SociaSave
+package.name = sociasave
 package.domain = org.hamedafshari
 source.dir = .
 source.include_exts = py,ttf,xml
-version = 1.1
-requirements = python3,kivy==2.3.0,yt-dlp,gallery-dl,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
+version = 2.0
+requirements = python3,kivy==2.3.2,yt-dlp==2026.10.26,yt-dlp-ejs,gallery-dl==1.32.20,ffmpeg,av_codecs,requests,urllib3,idna,charset-normalizer,certifi,sqlite3,openssl,arabic-reshaper,python-bidi==0.4.2,six
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
-# receive links shared from the Instagram / YouTube apps
+android.permissions = INTERNET
 android.manifest.intent_filters = intent_filters.xml
 android.manifest.launch_mode = singleTask
-# target API 28 keeps classic access to /sdcard/Download (sideloaded app, not for Play Store)
-android.api = 28
-android.minapi = 21
+android.add_src = android_src
+android.api = 36
+android.minapi = 29
 android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
-android.ndk = 25b
-# pin a stable python-for-android release (the newest branch has no kivy wheels yet)
-p4a.branch = v2024.01.21
+android.ndk = 28c
+p4a.branch = develop
+p4a.commit = 9562d1b4f306d0af1e76991c711114010dea4152
 
 [buildozer]
 log_level = 2
