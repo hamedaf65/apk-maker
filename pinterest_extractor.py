@@ -165,11 +165,18 @@ def _session(cookies_file=None):
     return session
 
 
-def _download_file(session, url, destination, referer, timeout=60):
+def _download_file(session, url, destination, referer, timeout=60, on_progress=None):
     headers = {"Referer": referer, "User-Agent": USER_AGENT}
     response = session.get(url, headers=headers, stream=True, timeout=timeout)
     response.raise_for_status()
     content_type = (response.headers.get("Content-Type") or "").lower()
+    try:
+        total_bytes = int(response.headers.get("Content-Length") or 0)
+    except (TypeError, ValueError):
+        total_bytes = 0
+    downloaded_bytes = 0
+    if on_progress and not total_bytes:
+        on_progress(None)
     if "text/html" in content_type:
         raise RuntimeError("Pinterest CDN returned an HTML page instead of media.")
     temporary = destination + ".part"
@@ -178,19 +185,26 @@ def _download_file(session, url, destination, referer, timeout=60):
             for chunk in response.iter_content(256 * 1024):
                 if chunk:
                     handle.write(chunk)
+                    downloaded_bytes += len(chunk)
+                    if on_progress and total_bytes:
+                        on_progress(min(100.0, downloaded_bytes * 100.0 / total_bytes))
         if not os.path.isfile(temporary) or os.path.getsize(temporary) < 128:
             raise RuntimeError("Pinterest returned an empty media file.")
         os.replace(temporary, destination)
+        if on_progress and total_bytes:
+            on_progress(100.0)
     finally:
         response.close()
         if os.path.exists(temporary):
             os.remove(temporary)
 
 
-def _download_hls(url, destination, referer, ffmpeg_path, log):
+def _download_hls(url, destination, referer, ffmpeg_path, log, on_progress=None):
     if not ffmpeg_path:
         raise RuntimeError("Pinterest supplied HLS video, but FFmpeg is unavailable.")
     temporary = destination + ".part.mp4"
+    if on_progress:
+        on_progress(None)
     headers = "User-Agent: " + USER_AGENT + "\r\nReferer: " + referer + "\r\n"
     command = [
         ffmpeg_path, "-y", "-hide_banner", "-loglevel", "error",
@@ -204,10 +218,12 @@ def _download_hls(url, destination, referer, ffmpeg_path, log):
             os.remove(temporary)
         raise RuntimeError(detail)
     os.replace(temporary, destination)
+    if on_progress:
+        on_progress(100.0)
     log("Pinterest HLS stream was remuxed to MP4.")
 
 
-def download_pin(url, root, cookies_file=None, log=None, ffmpeg_path=None):
+def download_pin(url, root, cookies_file=None, log=None, ffmpeg_path=None, on_progress=None):
     """Resolve a public Pin and save its image/video plus caption/source files."""
     log = log or (lambda _message: None)
     session = _session(cookies_file)
@@ -234,9 +250,9 @@ def download_pin(url, root, cookies_file=None, log=None, ffmpeg_path=None):
         target = os.path.join(destination, "pinterest_" + pin_id + extension)
         try:
             if is_hls:
-                _download_hls(media_url, target, final_url, ffmpeg_path, log)
+                _download_hls(media_url, target, final_url, ffmpeg_path, log, on_progress)
             else:
-                _download_file(session, media_url, target, final_url)
+                _download_file(session, media_url, target, final_url, on_progress=on_progress)
             _write_text(destination, caption, final_url)
             log("Pinterest video downloaded from the Pin page.")
             response.close()
@@ -256,7 +272,7 @@ def download_pin(url, root, cookies_file=None, log=None, ffmpeg_path=None):
         suffix = "" if index == 1 else "_" + str(index)
         target = os.path.join(destination, "pinterest_" + pin_id + suffix + extension)
         try:
-            _download_file(session, media_url, target, final_url)
+            _download_file(session, media_url, target, final_url, on_progress=on_progress)
             downloaded_images += 1
             log("Pinterest image " + str(index) + " downloaded.")
         except Exception as exc:
