@@ -626,7 +626,7 @@ class Root(BoxLayout):
         self.status_popup = LightPopup(
             title="", content=panel, size_hint=(0.88, None), height=dp(350),
             auto_dismiss=False, separator_height=0,
-            background="", background_color=(0.99, 0.98, 1, 1))
+            background="", background_color=LightPopup.ALERT_BG)
         self.status_ring.on_finished = self.dismiss_status
         self.status_popup.open()
         self._start_spin(self.status_ring)
