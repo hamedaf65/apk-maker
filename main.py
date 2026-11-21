@@ -8,7 +8,6 @@ import webbrowser
 import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.app import App
-from kivy.animation import Animation
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Triangle
 from kivy.metrics import dp
 from kivy.properties import NumericProperty, StringProperty
@@ -174,7 +173,7 @@ class LightPopup(Popup):
 
     def __init__(self, **kwargs):
         kwargs.setdefault("background", "")
-        kwargs.setdefault("background_color", (0, 0, 0, 0))
+        kwargs.setdefault("background_color", self.ALERT_BG)
         super().__init__(**kwargs)
         self._apply_alert_style(self.content)
         with self.canvas.before:
@@ -311,7 +310,10 @@ class ContactAction(ButtonBehavior, BoxLayout):
 
 class Root(BoxLayout):
     def __init__(self, user_dir, **kw):
-        super().__init__(orientation="vertical", padding=0, spacing=0, **kw)
+        safe_top = dp(30) if platform == "android" else 0
+        safe_bottom = dp(36) if platform == "android" else 0
+        super().__init__(orientation="vertical",
+                         padding=(0, safe_top, 0, safe_bottom), spacing=0, **kw)
         self.user_dir = user_dir
         self.cookies_path = os.path.join(user_dir, "ig_cookies.txt")
         self.log_path = os.path.join(user_dir, "downloader-internal.log")
@@ -325,10 +327,9 @@ class Root(BoxLayout):
         self.status_title = None
         self.status_detail = None
         self.status_close_btn = None
-        self.spin_animation = None
+        self.spin_event = None
         self.current_view = None
         self.status_open_btn = None
-        self.first_run_marker = os.path.join(user_dir, "vpn_notice_accepted")
         Window.clearcolor = (0.975, 0.965, 1, 1)
         with self.canvas.before:
             Color(0.975, 0.965, 1, 1)
@@ -349,31 +350,28 @@ class Root(BoxLayout):
         self.main_view = self.build_download()
         self.contact_view = self.build_contact()
         self.show_main()
-        Clock.schedule_once(lambda _dt: self.show_first_run_notice(), 0.7)
+        Clock.schedule_once(lambda _dt: self.show_startup_notice(), 0.7)
 
-    def show_first_run_notice(self):
-        if os.path.exists(self.first_run_marker):
-            return
-        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(14))
-        panel.add_widget(label("پیش از استفاده از SociaSave",
-                               height=dp(46), halign="center", font_size="19sp",
-                               color=(0.13, 0.12, 0.31, 1)))
-        panel.add_widget(label("با توجه به محدودیت‌های دسترسی به شبکه‌های اجتماعی، لطفاً پیش از استفاده از برنامه فیلترشکن خود را روشن کنید.",
-                               height=dp(100), halign="center", font_size="15sp",
-                               color=(0.30, 0.28, 0.43, 1)))
-        accept = button("تأیید و ادامه", size_hint_y=None, height=dp(52),
-                        fill=(0.56, 0.18, 0.92, 1), font_size="16sp")
+    def show_startup_notice(self):
+        """Show the network-access reminder on every fresh app launch."""
+        panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
+        panel.add_widget(label("Welcome to SociaSave",
+                               height=dp(38), halign="center", font_size="16sp"))
+        message = Label(
+            text=("Due to access restrictions affecting some social media platforms, "
+                  "a VPN may be required for SociaSave to work properly. "
+                  "Please connect your VPN before downloading."),
+            font_name=FONT, font_size="16sp", color=LightPopup.ALERT_TEXT,
+            size_hint_y=None, height=dp(118), halign="center", valign="middle")
+        message.bind(size=lambda widget, size: setattr(widget, "text_size", size))
+        panel.add_widget(message)
+        accept = button("Continue", size_hint_y=None, height=dp(48),
+                        fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT,
+                        font_size="16sp")
         panel.add_widget(accept)
         popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
-                           height=dp(250), auto_dismiss=False)
-        def accepted(*_):
-            try:
-                os.makedirs(self.user_dir, exist_ok=True)
-                with open(self.first_run_marker, "w", encoding="utf-8") as handle:
-                    handle.write("accepted")
-            finally:
-                popup.dismiss()
-        accept.bind(on_release=accepted)
+                           height=dp(270), auto_dismiss=False)
+        accept.bind(on_release=popup.dismiss)
         popup.open()
 
     def _sync_background(self, *_):
@@ -634,19 +632,28 @@ class Root(BoxLayout):
         self._start_spin(self.status_ring)
 
     def _start_spin(self, ring):
+        """Drive the loading arc continuously without animation repeat resets."""
         if not ring or ring.state != "loading":
             return
-        animation = Animation(angle=ring.angle + 360, duration=1.05, t="linear")
-        animation.repeat = True
-        self.spin_animation = animation
-        animation.start(ring)
+        if self.spin_event:
+            self.spin_event.cancel()
+        ring.angle = 0
+        self.spin_event = Clock.schedule_interval(self._spin_step, 1.0 / 60.0)
+
+    def _spin_step(self, dt):
+        ring = self.status_ring
+        if ring is None or ring.state != "loading":
+            self.spin_event = None
+            return False
+        ring.angle = (ring.angle + (360.0 * dt / 1.05)) % 360.0
+        return True
 
     def finish_download(self, successes, failures):
         self.busy = False
         self.btn.disabled = False
-        if self.spin_animation:
-            self.spin_animation.cancel(self.status_ring)
-            self.spin_animation = None
+        if self.spin_event:
+            self.spin_event.cancel()
+            self.spin_event = None
         if successes:
             self.status_ring.state = "success"
             self.status_title.text = fa("دانلود انجام شد")
