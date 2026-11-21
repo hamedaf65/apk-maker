@@ -10,7 +10,7 @@ from bidi.algorithm import get_display
 from kivy.app import App
 from kivy.graphics import Color, Ellipse, Line, RoundedRectangle, Triangle
 from kivy.metrics import dp
-from kivy.properties import NumericProperty, StringProperty
+from kivy.properties import NumericProperty
 from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
@@ -94,43 +94,51 @@ class RoundedButton(Button):
         self._sync_fill()
 
 
-class StatusRing(Widget):
-    angle = NumericProperty(0)
-    state = StringProperty("loading")
+class DownloadProgressBar(Widget):
+    """Blue horizontal progress meter with a centered, readable percentage."""
+    value = NumericProperty(0)
 
     def __init__(self, **kw):
-        self.on_finished = None
         super().__init__(**kw)
-        self.bind(pos=self.redraw, size=self.redraw, angle=self.redraw, state=self.redraw)
+        self.percent_label = Label(
+            text="0%", font_name=FONT, font_size="16sp", bold=True,
+            color=(1, 1, 1, 1), size_hint=(None, None),
+            halign="center", valign="middle")
+        self.percent_label.size = (dp(64), dp(30))
+        with self.percent_label.canvas.before:
+            Color(0.04, 0.16, 0.48, 1)
+            self._percent_bg = RoundedRectangle(
+                pos=self.percent_label.pos, size=self.percent_label.size,
+                radius=[dp(8)])
+        self.percent_label.bind(pos=self._sync_percent_bg,
+                                size=self._sync_percent_bg)
+        self.add_widget(self.percent_label)
+        self.bind(pos=self.redraw, size=self.redraw, value=self.redraw)
         self.redraw()
+
+    def _sync_percent_bg(self, *_):
+        self._percent_bg.pos = self.percent_label.pos
+        self._percent_bg.size = self.percent_label.size
+
+    def set_unknown(self):
+        self.percent_label.text = "—"
 
     def redraw(self, *_):
         self.canvas.clear()
-        radius = min(self.width, self.height) * 0.40
-        cx, cy = self.center
+        value = max(0.0, min(100.0, float(self.value)))
         with self.canvas:
-            Color(0.86, 0.83, 0.95, 1)
-            Line(circle=(cx, cy, radius), width=dp(3))
-            if self.state == "loading":
-                Color(0.40, 0.18, 0.91, 1)
-                Line(circle=(cx, cy, radius, self.angle, self.angle + 255), width=dp(5), cap="round")
-            elif self.state == "success":
-                Color(0.08, 0.66, 0.34, 1)
-                Line(points=[cx-radius*0.48, cy, cx-radius*0.10, cy-radius*0.35,
-                             cx+radius*0.52, cy+radius*0.38], width=dp(6), cap="round", joint="round")
-            else:
-                Color(0.84, 0.15, 0.20, 1)
-                Line(points=[cx-radius*0.38, cy-radius*0.38, cx+radius*0.38, cy+radius*0.38],
-                     width=dp(6), cap="round")
-                Line(points=[cx-radius*0.38, cy+radius*0.38, cx+radius*0.38, cy-radius*0.38],
-                     width=dp(6), cap="round")
-
-    def on_touch_down(self, touch):
-        if self.collide_point(*touch.pos) and self.state != "loading":
-            if self.on_finished:
-                self.on_finished()
-            return True
-        return super().on_touch_down(touch)
+            Color(0.86, 0.89, 0.96, 1)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(11)])
+            fill_width = self.width * value / 100.0
+            if fill_width > 0:
+                Color(0.04, 0.29, 0.82, 1)
+                RoundedRectangle(
+                    pos=self.pos, size=(fill_width, self.height),
+                    radius=[dp(11)])
+        self.percent_label.text = str(int(round(value))) + "%"
+        self.percent_label.center = self.center
+        self.percent_label.size = (dp(64), min(dp(30), self.height - dp(6)))
+        self._sync_percent_bg()
 
 
 def button(text, **kw):
@@ -192,7 +200,7 @@ class LightPopup(Popup):
             widget.color = self.ALERT_TEXT
             widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
-        if isinstance(widget, Button):
+        if isinstance(widget, Button) and not getattr(widget, "preserve_popup_style", False):
             widget.color = self.ALERT_TEXT
             widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
@@ -323,11 +331,10 @@ class Root(BoxLayout):
         self.login_open = False
         self.login_platform = None
         self.status_popup = None
-        self.status_ring = None
+        self.status_progress = None
         self.status_title = None
         self.status_detail = None
         self.status_close_btn = None
-        self.spin_event = None
         self.current_view = None
         self.status_open_btn = None
         Window.clearcolor = (0.975, 0.965, 1, 1)
@@ -355,8 +362,12 @@ class Root(BoxLayout):
     def show_startup_notice(self):
         """Show the network-access reminder on every fresh app launch."""
         panel = BoxLayout(orientation="vertical", padding=dp(20), spacing=dp(12))
-        panel.add_widget(label("Welcome to SociaSave",
-                               height=dp(38), halign="center", font_size="16sp"))
+        header = SoftCard(orientation="vertical", fill=(0.92, 0.82, 0.98, 1),
+                          padding=(dp(8), 0), radius=dp(12),
+                          size_hint_y=None, height=dp(38))
+        header.add_widget(label("Welcome to SociaSave", height=dp(36),
+                                halign="center", font_size="16sp", bold=True))
+        panel.add_widget(header)
         message = Label(
             text=("Due to access restrictions affecting some social media platforms, "
                   "a VPN may be required for SociaSave to work properly. "
@@ -366,8 +377,9 @@ class Root(BoxLayout):
         message.bind(size=lambda widget, size: setattr(widget, "text_size", size))
         panel.add_widget(message)
         accept = button("Continue", size_hint_y=None, height=dp(48),
-                        fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT,
+                        fill=(0.08, 0.06, 0.30, 1), color=(1, 1, 1, 1),
                         font_size="16sp")
+        accept.preserve_popup_style = True
         panel.add_widget(accept)
         popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
                            height=dp(270), auto_dismiss=False)
@@ -412,7 +424,7 @@ class Root(BoxLayout):
         brand = Label(text="[color=151A3D][b]Socia[/b][/color][color=8A27DD][b]Save[/b][/color]",
                       markup=True, font_name=FONT, font_size="31sp",
                       size_hint_y=None, height=dp(42))
-        tagline = label("دانلود محتوا از شبکه‌های اجتماعی",
+        tagline = label("Downloading content from social media networks",
                         height=dp(34), halign="center", font_size="13sp",
                         color=(0.34, 0.33, 0.49, 1))
         hero.add_widget(brand_mark)
@@ -422,7 +434,7 @@ class Root(BoxLayout):
 
         input_card = SoftCard(orientation="vertical", padding=(dp(15), dp(13)),
                               spacing=dp(8), size_hint_y=None, height=dp(190))
-        input_card.add_widget(label("پست مورد نظر خودتون رو از هر پلتفرمی اینجا قرار دهید:\nآدرس لینک",
+        input_card.add_widget(label("Paste the post you'd like to share from any platform here:\nLink address:",
                                     height=dp(50), halign="center", font_size="13sp",
                                     color=(0.13, 0.13, 0.31, 1)))
         self.url = TextInput(
@@ -467,7 +479,7 @@ class Root(BoxLayout):
         connect_row.add_widget(self.youtube_btn)
         content.add_widget(connect_row)
 
-        self.files_btn = button("▣   محل ذخیره فایل‌های دانلود شده", fill=(0.93, 0.89, 1, 1),
+        self.files_btn = button("▣   Location for saved downloaded files", fill=(0.93, 0.89, 1, 1),
                                 color=(0.15, 0.12, 0.34, 1),
                                 size_hint_y=None, height=dp(58), font_size="16sp")
         self.files_btn.bind(on_release=lambda *_: self.show_downloads())
@@ -522,8 +534,15 @@ class Root(BoxLayout):
         except Exception:
             pass
 
-    def progress(self, v):
-        Clock.schedule_once(lambda dt: setattr(self.bar, "value", v))
+    def progress(self, value):
+        def update(_dt):
+            if not self.status_progress:
+                return
+            if value is None:
+                self.status_progress.set_unknown()
+            else:
+                self.status_progress.value = max(0.0, min(100.0, float(value)))
+        Clock.schedule_once(update, 0)
 
     def paste(self):
         try:
@@ -569,6 +588,9 @@ class Root(BoxLayout):
                 cookies_path = self._cookie_file(platform_name)
                 cookies = cookies_path if os.path.isfile(cookies_path) else None
                 def on_progress(value, current=index):
+                    if value is None:
+                        self.progress(None)
+                        return
                     overall = ((current - 1) + max(0, min(100, float(value))) / 100.0) * 100.0 / total
                     self.progress(overall)
                 destination = core.run(url, root, cookies, self.log, on_progress)
@@ -584,6 +606,7 @@ class Root(BoxLayout):
                     self.log("Exported files to Download/SociaSave/" + relative_dir)
                     shutil.rmtree(destination, ignore_errors=True)
                 successes.append(destination)
+                self.progress(index * 100.0 / total)
                 self.log("Completed: " + destination)
             except Exception as exc:
                 self.log("Failure: " + repr(exc))
@@ -591,21 +614,22 @@ class Root(BoxLayout):
                     failures.append(core.friendly_error(url, exc))
                 except Exception:
                     failures.append("Download failed. Check the link and try again.")
-            self.progress(index * 100.0 / total)
         Clock.schedule_once(lambda dt: self.finish_download(successes, failures))
 
     def show_processing(self):
         if self.status_popup:
             self.status_popup.dismiss()
         panel = BoxLayout(orientation="vertical", padding=(dp(20), dp(18)), spacing=dp(10))
-        self.status_ring = StatusRing(size_hint=(1, None), height=dp(112))
+        self.status_progress = DownloadProgressBar(
+            size_hint=(1, None), height=dp(46))
+        self.status_progress.value = 0
         self.status_title = Label(
             text="Downloading...", font_name=FONT, font_size="19sp",
             color=(0.12, 0.10, 0.26, 1), size_hint_y=None, height=dp(36))
         self.status_detail = Label(
-            text=fa("در حال دریافت محتوا؛ لطفاً برنامه را نبندید"),
-            font_name=FONT, font_size="14sp", color=(0.36, 0.34, 0.49, 1),
-            size_hint_y=None, height=dp(82), halign="center", valign="middle")
+            text="The percentage shows the current media file's download progress.",
+            font_name=FONT, font_size="13sp", color=(0.36, 0.34, 0.49, 1),
+            size_hint_y=None, height=dp(58), halign="center", valign="middle")
         self.status_detail.bind(size=lambda widget, size: setattr(widget, "text_size", size))
         self.status_open_btn = button(
             "Open Download Folder", size_hint_y=None, height=dp(48),
@@ -618,44 +642,23 @@ class Root(BoxLayout):
             fill=(0.93, 0.89, 1, 1), color=(0.20, 0.14, 0.36, 1))
         self.status_close_btn.disabled = True
         self.status_close_btn.bind(on_release=lambda *_: self.dismiss_status())
-        panel.add_widget(self.status_ring)
+        panel.add_widget(self.status_progress)
         panel.add_widget(self.status_title)
         panel.add_widget(self.status_detail)
         panel.add_widget(self.status_open_btn)
         panel.add_widget(self.status_close_btn)
         self.status_popup = LightPopup(
-            title="", content=panel, size_hint=(0.88, None), height=dp(350),
+            title="", content=panel, size_hint=(0.88, None), height=dp(285),
             auto_dismiss=False, separator_height=0,
             background="", background_color=LightPopup.ALERT_BG)
-        self.status_ring.on_finished = self.dismiss_status
         self.status_popup.open()
-        self._start_spin(self.status_ring)
-
-    def _start_spin(self, ring):
-        """Drive the loading arc continuously without animation repeat resets."""
-        if not ring or ring.state != "loading":
-            return
-        if self.spin_event:
-            self.spin_event.cancel()
-        ring.angle = 0
-        self.spin_event = Clock.schedule_interval(self._spin_step, 1.0 / 60.0)
-
-    def _spin_step(self, dt):
-        ring = self.status_ring
-        if ring is None or ring.state != "loading":
-            self.spin_event = None
-            return False
-        ring.angle = (ring.angle + (360.0 * dt / 1.05)) % 360.0
-        return True
 
     def finish_download(self, successes, failures):
         self.busy = False
         self.btn.disabled = False
-        if self.spin_event:
-            self.spin_event.cancel()
-            self.spin_event = None
         if successes:
-            self.status_ring.state = "success"
+            if not failures and self.status_progress:
+                self.status_progress.value = 100
             self.status_title.text = fa("دانلود انجام شد")
             if failures:
                 self.status_detail.text = fa(str(len(successes)) + " مورد ذخیره شد؛ " + str(len(failures)) + " مورد ناموفق بود.")
@@ -663,16 +666,14 @@ class Root(BoxLayout):
                 self.status_detail.text = fa("فایل با موفقیت ذخیره شد.")
             self.status_open_btn.disabled = False
             self.status_open_btn.opacity = 1
-            self.files_btn.text = "★   محل ذخیره فایل‌های دانلود شده"
+            self.files_btn.text = "★   Location for saved downloaded files"
             self.files_btn.set_fill((0.83, 0.97, 0.87, 1))
         else:
-            self.status_ring.state = "error"
             self.status_open_btn.disabled = True
             self.status_open_btn.opacity = 0
             self.status_title.text = "Download failed"
             self.status_detail.text = failures[0] if failures else fa("دانلود انجام نشد؛ لینک را بررسی کنید.")
         self.status_close_btn.disabled = False
-        self.status_ring.redraw()
 
     def dismiss_status(self):
         if self.status_popup:
