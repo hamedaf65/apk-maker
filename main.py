@@ -377,8 +377,9 @@ class Root(BoxLayout):
         message.bind(size=lambda widget, size: setattr(widget, "text_size", size))
         panel.add_widget(message)
         accept = button("Continue", size_hint_y=None, height=dp(48),
-                        fill=(0.08, 0.06, 0.30, 1), color=(1, 1, 1, 1),
-                        font_size="16sp")
+                        fill=(0.08, 0.06, 0.30, 1),
+                        color=(1.0, 1.0, 1.0, 1.0),
+                        font_size="16sp", bold=True)
         accept.preserve_popup_style = True
         panel.add_widget(accept)
         popup = LightPopup(title="", content=panel, size_hint=(0.90, None),
@@ -434,7 +435,7 @@ class Root(BoxLayout):
 
         input_card = SoftCard(orientation="vertical", padding=(dp(15), dp(13)),
                               spacing=dp(8), size_hint_y=None, height=dp(190))
-        input_card.add_widget(label("Paste the post you'd like to share from any platform here:\nLink address:",
+        input_card.add_widget(label("Paste the post you'd like to share from any platform\nLink address:",
                                     height=dp(50), halign="center", font_size="13sp",
                                     color=(0.13, 0.13, 0.31, 1)))
         self.url = TextInput(
@@ -633,7 +634,9 @@ class Root(BoxLayout):
         self.status_detail.bind(size=lambda widget, size: setattr(widget, "text_size", size))
         self.status_open_btn = button(
             "Open Download Folder", size_hint_y=None, height=dp(48),
-            fill=(0.83, 0.97, 0.87, 1), color=(0.10, 0.40, 0.22, 1))
+            fill=(0.02, 0.42, 0.16, 1), color=(1.0, 1.0, 1.0, 1.0),
+            bold=True)
+        self.status_open_btn.preserve_popup_style = True
         self.status_open_btn.disabled = True
         self.status_open_btn.opacity = 0
         self.status_open_btn.bind(on_release=lambda *_: self.show_downloads())
@@ -659,11 +662,11 @@ class Root(BoxLayout):
         if successes:
             if not failures and self.status_progress:
                 self.status_progress.value = 100
-            self.status_title.text = fa("دانلود انجام شد")
+            self.status_title.text = "Download complete"
             if failures:
-                self.status_detail.text = fa(str(len(successes)) + " مورد ذخیره شد؛ " + str(len(failures)) + " مورد ناموفق بود.")
+                self.status_detail.text = str(len(successes)) + " file(s) saved; " + str(len(failures)) + " failed."
             else:
-                self.status_detail.text = fa("فایل با موفقیت ذخیره شد.")
+                self.status_detail.text = "The file was saved successfully."
             self.status_open_btn.disabled = False
             self.status_open_btn.opacity = 1
             self.files_btn.text = "★   Location for saved downloaded files"
@@ -672,7 +675,7 @@ class Root(BoxLayout):
             self.status_open_btn.disabled = True
             self.status_open_btn.opacity = 0
             self.status_title.text = "Download failed"
-            self.status_detail.text = failures[0] if failures else fa("دانلود انجام نشد؛ لینک را بررسی کنید.")
+            self.status_detail.text = failures[0] if failures else "Download failed. Please check the link and try again."
         self.status_close_btn.disabled = False
 
     def dismiss_status(self):
@@ -682,8 +685,13 @@ class Root(BoxLayout):
 
     def connect_other_accounts(self):
         panel = BoxLayout(orientation="vertical", padding=dp(18), spacing=dp(10))
-        panel.add_widget(label("اتصال اختیاری حساب‌های شبکه‌های اجتماعی",
-                               height=dp(48), halign="center", font_size="17sp"))
+        heading = SoftCard(orientation="vertical", fill=(0.92, 0.82, 0.98, 1),
+                            padding=(dp(8), 0), radius=dp(12),
+                            size_hint_y=None, height=dp(48))
+        heading.add_widget(label("Optional connection to social media accounts",
+                                 height=dp(46), halign="center", font_size="16sp",
+                                 bold=True))
+        panel.add_widget(heading)
         choices = [
             ("Connect to Facebook", "facebook"),
             ("Connect to TikTok", "tiktok"),
@@ -693,13 +701,17 @@ class Root(BoxLayout):
                            height=dp(420), auto_dismiss=False)
         for title, platform_name in choices:
             action = button(title, size_hint_y=None, height=dp(48),
-                            fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT)
+                            fill=(0.08, 0.06, 0.30, 1),
+                            color=(1.0, 1.0, 1.0, 1.0), bold=True)
+            action.preserve_popup_style = True
             action.bind(on_release=lambda _btn, name=platform_name:
                         (popup.dismiss(), self.start_platform_login(name)))
             panel.add_widget(action)
         youtube = button("YouTube connection information",
                          size_hint_y=None, height=dp(48),
-                         fill=LightPopup.ALERT_BG, color=LightPopup.ALERT_TEXT)
+                         fill=(0.08, 0.06, 0.30, 1),
+                         color=(1.0, 1.0, 1.0, 1.0), bold=True)
+        youtube.preserve_popup_style = True
         youtube.bind(on_release=lambda *_: (popup.dismiss(), self.youtube_connect_info()))
         panel.add_widget(youtube)
         threads = label("Threads: downloading is not available yet.",
