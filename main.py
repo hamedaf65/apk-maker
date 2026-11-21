@@ -167,7 +167,7 @@ class SoftCard(BoxLayout):
 
 class LightPopup(Popup):
     """Consistent high-contrast lavender style for every app notification."""
-    ALERT_BG = (0.94, 0.91, 1, 1)
+    ALERT_BG = (0.97, 0.95, 1, 1)  # opaque near-white lavender
     ALERT_TEXT = (0.15, 0.12, 0.34, 1)  # same dark purple as the Downloads button
     ALERT_FONT = "16sp"  # consistent readable size across every popup
 
