@@ -536,6 +536,8 @@ def _download_ytdlp(url, root, platform_name, log, on_progress=None, cookies_fil
                     total = data.get("total_bytes") or data.get("total_bytes_estimate")
                     if total:
                         on_progress((data.get("downloaded_bytes") or 0) * 100.0 / total)
+                    else:
+                        on_progress(None)
                 elif data.get("status") == "finished":
                     on_progress(100)
 
