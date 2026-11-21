@@ -362,6 +362,7 @@ class Root(BoxLayout):
         self.status_close_btn = None
         self.current_view = None
         self.status_open_btn = None
+        self.status_copy_btn = None
         Window.clearcolor = (0.975, 0.965, 1, 1)
         with self.canvas.before:
             Color(0.975, 0.965, 1, 1)
@@ -665,6 +666,13 @@ class Root(BoxLayout):
         self.status_open_btn.disabled = True
         self.status_open_btn.opacity = 0
         self.status_open_btn.bind(on_release=lambda *_: self.show_downloads())
+        self.status_copy_btn = button(
+            "Copy error report", size_hint_y=None, height=dp(44),
+            fill=(0.08, 0.06, 0.30, 1), color=(1, 1, 1, 1), bold=True)
+        self.status_copy_btn.preserve_popup_style = True
+        self.status_copy_btn.opacity = 0
+        self.status_copy_btn.disabled = True
+        self.status_copy_btn.bind(on_release=lambda *_: self.copy_error_report())
         self.status_close_btn = button(
             "Close", size_hint_y=None, height=dp(46),
             fill=(0.93, 0.89, 1, 1), color=(0.20, 0.14, 0.36, 1))
@@ -674,9 +682,10 @@ class Root(BoxLayout):
         panel.add_widget(self.status_title)
         panel.add_widget(self.status_detail)
         panel.add_widget(self.status_open_btn)
+        panel.add_widget(self.status_copy_btn)
         panel.add_widget(self.status_close_btn)
         self.status_popup = LightPopup(
-            title="", content=panel, size_hint=(0.88, None), height=dp(285),
+            title="", content=panel, size_hint=(0.88, None), height=dp(340),
             auto_dismiss=False, separator_height=0,
             background="", background_color=LightPopup.ALERT_BG)
         self.status_popup.open()
@@ -701,7 +710,22 @@ class Root(BoxLayout):
             self.status_open_btn.opacity = 0
             self.status_title.text = "Download failed"
             self.status_detail.text = failures[0] if failures else "Download failed. Please check the link and try again."
+            self.status_copy_btn.disabled = False
+            self.status_copy_btn.opacity = 1
         self.status_close_btn.disabled = False
+
+    def copy_error_report(self):
+        try:
+            if os.path.isfile(self.log_path):
+                with open(self.log_path, "r", encoding="utf-8") as handle:
+                    report = handle.read()[-30000:]
+            else:
+                report = "No diagnostic log file was created."
+            Clipboard.copy(report)
+            self.status_detail.text = "Error report copied. Paste it into your message."
+        except Exception as exc:
+            self.log("Could not copy diagnostic report: " + repr(exc))
+            self.status_detail.text = "Could not copy the report. Please retry."
 
     def dismiss_status(self):
         if self.status_popup:
