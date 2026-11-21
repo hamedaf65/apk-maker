@@ -310,9 +310,9 @@ class _GalleryLogHandler(logging.Handler):
             pass
 
 
-def _download_gallery_post(url, root, platform_name, cookies_file, log):
+def _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress=None):
     """Use gallery-dl for image-rich Instagram and X posts, including carousels."""
-    from gallery_dl import config, job
+    from gallery_dl import config, job, output
 
     temp_root = tempfile.mkdtemp(prefix="sociasave_" + platform_name + "_", dir=root)
     handler = _GalleryLogHandler(log)
@@ -323,6 +323,30 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
     try:
         config.clear()
         config.set(("extractor",), "base-directory", temp_root)
+        # Ask gallery-dl to emit byte progress callbacks quickly enough for the UI.
+        config.set(("downloader",), "progress", 0.25)
+
+        class ProgressOutput:
+            def start(self, path):
+                pass
+
+            def skip(self, path):
+                pass
+
+            def success(self, path):
+                pass
+
+            def progress(self, bytes_total, bytes_downloaded, bytes_per_second):
+                if not on_progress:
+                    return
+                if bytes_total:
+                    on_progress(max(0.0, min(
+                        100.0, bytes_downloaded * 100.0 / bytes_total)))
+                else:
+                    on_progress(None)
+
+        original_output_select = output.select
+        output.select = lambda: ProgressOutput()
         config.set(("extractor",), "directory", [])
         config.set(("extractor",), "filename", "{filename}.{extension}")
         if cookies_file and os.path.isfile(cookies_file):
@@ -365,7 +389,10 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log):
             log("X/Twitter: downloading media from the public post.")
             if cookies_file and os.path.isfile(cookies_file):
                 config.set(("extractor", "twitter"), "cookies", cookies_file)
-        job.DownloadJob(url).run()
+        try:
+            job.DownloadJob(url).run()
+        finally:
+            output.select = original_output_select
 
         media = _media_files(temp_root)
         if not media:
@@ -558,7 +585,7 @@ def run(url, root, cookies_file, log, on_progress=None):
     os.makedirs(root, exist_ok=True)
     log("Detected platform: " + platform_name)
     if platform_name in ("instagram", "twitter"):
-        return _download_gallery_post(url, root, platform_name, cookies_file, log)
+        return _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress)
     if platform_name == "pinterest":
         # First use a dedicated public Pin-page extractor. Keep maintained
         # extractors as fallback for page variants we do not yet understand.
@@ -566,12 +593,12 @@ def run(url, root, cookies_file, log, on_progress=None):
             from pinterest_extractor import download_pin
             return download_pin(
                 url, root, cookies_file=cookies_file, log=log,
-                ffmpeg_path=_ffmpeg_path(),
+                ffmpeg_path=_ffmpeg_path(), on_progress=on_progress,
             )
         except Exception as direct_error:
             log("Pinterest direct page extraction failed; trying gallery-dl: " + repr(direct_error))
         try:
-            return _download_gallery_post(url, root, platform_name, cookies_file, log)
+            return _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress)
         except Exception as gallery_error:
             log("Pinterest gallery-dl path failed; trying yt-dlp: " + repr(gallery_error))
             try:
@@ -590,7 +617,7 @@ def run(url, root, cookies_file, log, on_progress=None):
             return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
         except Exception as ytdlp_error:
             log(platform_name + " yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
-            return _download_gallery_post(url, root, platform_name, cookies_file, log)
+            return _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress)
     return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
 
 
