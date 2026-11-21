@@ -324,7 +324,7 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log, on_progr
         config.clear()
         config.set(("extractor",), "base-directory", temp_root)
         # Ask gallery-dl to emit byte progress callbacks quickly enough for the UI.
-        config.set(("downloader",), "progress", 0.25)
+        config.set(("downloader", "http"), "progress", 0.25)
 
         class ProgressOutput:
             def start(self, path):
