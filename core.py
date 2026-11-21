@@ -310,6 +310,33 @@ class _GalleryLogHandler(logging.Handler):
             pass
 
 
+def _resolve_facebook_share_url(url, cookies_file=None, log=None):
+    """Resolve Facebook share short-links to canonical post/reel URLs."""
+    try:
+        import requests
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"})
+        if cookies_file and os.path.isfile(cookies_file):
+            try:
+                from http.cookiejar import MozillaCookieJar
+                jar = MozillaCookieJar()
+                jar.load(cookies_file, ignore_discard=True, ignore_expires=True)
+                session.cookies.update(jar)
+            except Exception as exc:
+                if log:
+                    log("Facebook cookie import for link resolution was skipped: " + str(exc)[:160])
+        response = session.get(url, allow_redirects=True, timeout=25, stream=True)
+        final_url = response.url
+        response.close()
+        if final_url and "facebook.com" in final_url.lower() and "/login" not in final_url.lower() and "/checkpoint" not in final_url.lower():
+            if final_url != url and log:
+                log("Facebook share link resolved to its canonical content URL.")
+            return final_url
+    except Exception as exc:
+        if log:
+            log("Facebook share-link resolution was unavailable; trying the original URL: " + str(exc)[:160])
+    return url
+
 def _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress=None):
     """Use gallery-dl for image-rich Instagram and X posts, including carousels."""
     from gallery_dl import config, job, output
@@ -365,8 +392,8 @@ def _download_gallery_post(url, root, platform_name, cookies_file, log, on_progr
                 config.set(("extractor", "instagram"), "cookies", cookies_file)
                 log("Instagram: using saved app-private session cookies.")
         elif platform_name == "facebook":
-            config.set(("extractor", "facebook"), "videos", True)
-            config.set(("extractor", "facebook"), "include", "photos")
+            # Let yt-dlp mux video/audio instead of saving separate tracks.
+            config.set(("extractor", "facebook"), "videos", "ytdl")
             if cookies_file and os.path.isfile(cookies_file):
                 config.set(("extractor", "facebook"), "cookies", cookies_file)
                 log("Facebook: using saved app-private session cookies.")
@@ -612,13 +639,33 @@ def run(url, root, cookies_file, log, on_progress=None):
                     " | gallery-dl: " + str(gallery_error)[:180] +
                     " | yt-dlp: " + str(ytdlp_error)[:180]
                 ) from ytdlp_error
-    if platform_name in ("facebook", "tiktok"):
-        # Use a second maintained extractor when the first one cannot parse the
-        # current page or cannot produce a muxed audio/video file.
+    if platform_name == "facebook":
+        resolved_url = _resolve_facebook_share_url(url, cookies_file, log)
+        path = resolved_url.lower().split("?", 1)[0]
+        image_post = (
+            "/share/p/" in url.lower()
+            or "/posts/" in path
+            or "/permalink/" in path
+            or "/permalink.php" in path
+            or "/photo/" in path
+            or "/photo.php" in path
+        )
+        if image_post:
+            try:
+                return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
+            except Exception as gallery_error:
+                log("Facebook photo-post extraction failed; trying yt-dlp: " + repr(gallery_error))
+                return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
+        try:
+            return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
+        except Exception as ytdlp_error:
+            log("Facebook yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
+            return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
+    if platform_name == "tiktok":
         try:
             return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
         except Exception as ytdlp_error:
-            log(platform_name + " yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
+            log("TikTok yt-dlp path failed; trying gallery-dl: " + repr(ytdlp_error))
             return _download_gallery_post(url, root, platform_name, cookies_file, log, on_progress)
     return _download_ytdlp(url, root, platform_name, log, on_progress, cookies_file)
 
