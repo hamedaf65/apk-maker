@@ -68,6 +68,16 @@ def open_url(url):
         webbrowser.open(url)
 
 
+def _is_dark_button_fill(fill):
+    """Return True for dark button backgrounds that require white text."""
+    try:
+        r, g, b = (float(fill[0]), float(fill[1]), float(fill[2]))
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return luminance < 0.20
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
 class RoundedButton(Button):
     def __init__(self, text="", fill=(0.39, 0.16, 0.90, 1), **kw):
         self.fill = fill
@@ -76,7 +86,13 @@ class RoundedButton(Button):
         kw.setdefault("background_color", (0, 0, 0, 0))
         kw.setdefault("color", (1, 1, 1, 1))
         kw.setdefault("font_size", "15sp")
+        if _is_dark_button_fill(fill):
+            kw["color"] = (1, 1, 1, 1)
+            kw["disabled_color"] = (1, 1, 1, 1)
         super().__init__(text=text, font_name=FONT, **kw)
+        if _is_dark_button_fill(self.fill):
+            self.color = (1, 1, 1, 1)
+            self.disabled_color = (1, 1, 1, 1)
         with self.canvas.before:
             self._fill_color = Color(*self.fill)
             self._rounded = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(15)])
@@ -200,12 +216,21 @@ class LightPopup(Popup):
             widget.color = self.ALERT_TEXT
             widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
-        if isinstance(widget, Button) and not getattr(widget, "preserve_popup_style", False):
+        if isinstance(widget, RoundedButton):
+            widget.font_name = FONT
+            widget.font_size = self.ALERT_FONT
+            if _is_dark_button_fill(widget.fill):
+                # Keep the dark-purple background and force readable white text,
+                # including while the button is disabled.
+                widget.color = (1, 1, 1, 1)
+                widget.disabled_color = (1, 1, 1, 1)
+            elif not getattr(widget, "preserve_popup_style", False):
+                widget.color = self.ALERT_TEXT
+                widget.set_fill(self.ALERT_BG)
+        elif isinstance(widget, Button) and not getattr(widget, "preserve_popup_style", False):
             widget.color = self.ALERT_TEXT
             widget.font_name = FONT
             widget.font_size = self.ALERT_FONT
-            if isinstance(widget, RoundedButton):
-                widget.set_fill(self.ALERT_BG)
         for child in getattr(widget, "children", []):
             self._apply_alert_style(child)
 
