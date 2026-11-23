@@ -34,7 +34,7 @@ def _clean(value):
     value = html.unescape(str(value or ""))
     return (value.replace("\\/", "/").replace("\\u002F", "/")
             .replace("\\u003D", "=").replace("\\u0026", "&")
-            .strip().rstrip("),;]}"))
+            .strip())
 
 
 def _is_facebook_media_url(value):
