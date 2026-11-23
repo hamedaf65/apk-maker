@@ -19,8 +19,8 @@ _MEDIA_HOST_SUFFIXES = (
 _VIDEO_KEYS = {
     "playable_url", "playable_url_quality_hd", "browser_native_hd_url",
     "browser_native_sd_url", "progressive_url", "video_url",
-    "dash_manifest_url", "manifest_url", "playable_url_dash", "browser_native_hd_url",
-    "browser_native_sd_url", "hls_playlist_url", "dashmanifesturl", "dashmanifest",
+    "dash_manifest_url", "manifest_url", "playable_url_dash",
+    "hls_playlist_url", "dashmanifesturl", "dashmanifest",
 }
 _IMAGE_KEYS = {
     "image", "image_url", "photo", "photo_url", "photo_image",
