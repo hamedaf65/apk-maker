@@ -67,7 +67,7 @@ jobs:
           rustc --version
           java -version
       - name: Validate Python syntax
-        run: python -m py_compile main.py core.py yt_dlp_plugins/__init__.py yt_dlp_plugins/extractor/__init__.py yt_dlp_plugins/extractor/threads.py pinterest_extractor.py facebook_extractor.py tests/test_facebook_extractor.py
+        run: python -m py_compile main.py core.py yt_dlp_plugins/__init__.py yt_dlp_plugins/extractor/__init__.py yt_dlp_plugins/extractor/threads.py pinterest_extractor.py facebook_extractor.py facebook_webview.py tests/test_facebook_extractor.py tests/test_facebook_webview.py
       - name: Install host test dependencies
         run: python -m pip install "yt-dlp==2026.10.26" requests
       - name: Run offline unit tests
@@ -111,6 +111,9 @@ jobs:
         run: |
           test -f android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
           grep -q "exportDirectory" android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
+          grep -q "startFacebookPageCapture" android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
+          grep -q "getFacebookPageCaptureHtml" android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
+          grep -q "captureFacebookPageMarkup" android_src/org/hamedafshari/sociasave/SociaSaveStorage.java
       - name: Build APK
         run: yes | buildozer -v android debug > build.log 2>&1
       - name: Show error summary (only if build failed)
