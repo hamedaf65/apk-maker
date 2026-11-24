@@ -16,6 +16,8 @@ import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.JavascriptInterface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -32,6 +34,9 @@ import java.io.OutputStream;
 public final class SociaSaveStorage {
     private static WebView loginWebView;
     private static LinearLayout loginContainer;
+    private static WebView facebookCaptureWebView;
+    private static volatile String facebookCaptureStatus = "idle";
+    private static volatile String facebookCaptureHtml = "";
 
     private SociaSaveStorage() {}
 
@@ -207,6 +212,129 @@ public final class SociaSaveStorage {
             exported++;
         }
         return exported;
+    }
+
+
+    // A separate, non-interactive WebView used only to inspect publicly accessible
+    // Facebook page markup. It never attempts to defeat login or privacy controls.
+    public static boolean startFacebookPageCapture(final Activity activity, final String pageUrl) {
+        if (activity == null || !isAllowedFacebookPage(pageUrl)) return false;
+        activity.runOnUiThread(() -> {
+            stopFacebookPageCapture(activity);
+            facebookCaptureStatus = "loading";
+            facebookCaptureHtml = "";
+
+            WebView view = new WebView(activity);
+            WebSettings settings = view.getSettings();
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(true);
+            settings.setLoadsImagesAutomatically(false);
+            settings.setBlockNetworkImage(true);
+            settings.setSupportMultipleWindows(false);
+            CookieManager cookies = CookieManager.getInstance();
+            cookies.setAcceptCookie(true);
+
+            view.addJavascriptInterface(new FacebookCaptureBridge(), "SociaSaveCapture");
+            view.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView webView, String url) {
+                    return !isAllowedFacebookPage(url);
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
+                    return !isAllowedFacebookPage(request.getUrl().toString());
+                }
+
+                @Override
+                public void onPageFinished(WebView webView, String url) {
+                    super.onPageFinished(webView, url);
+                    if (!isAllowedFacebookPage(url) || facebookCaptureWebView != webView) {
+                        facebookCaptureStatus = "error";
+                        return;
+                    }
+                    String script =
+                        "(function(){try{" +
+                        "var started=Date.now(),last=Date.now();" +
+                        "var observer=new MutationObserver(function(){last=Date.now();});" +
+                        "observer.observe(document.documentElement,{childList:true,subtree:true});" +
+                        "var timer=setInterval(function(){" +
+                        "if(Date.now()-started>16000){clearInterval(timer);observer.disconnect();" +
+                        "window.SociaSaveCapture.onError('Facebook page did not stabilize in time');return;}" +
+                        "if(document.readyState==='complete'&&Date.now()-last>1300){" +
+                        "clearInterval(timer);observer.disconnect();" +
+                        "var value=document.documentElement?document.documentElement.outerHTML:'';" +
+                        "if(value.length>1800000)value=value.substring(0,1800000);" +
+                        "window.SociaSaveCapture.onCapture(value);" +
+                        "}},400);" +
+                        "}catch(e){window.SociaSaveCapture.onError(String(e));}})();";
+                    webView.evaluateJavascript(script, null);
+                }
+            });
+
+            // Keep the WebView attached so Android continues loading it, but
+            // effectively invisible and outside the user's touch area.
+            view.setAlpha(0.01f);
+            view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            activity.addContentView(view, new ViewGroup.LayoutParams(1, 1));
+            facebookCaptureWebView = view;
+            view.loadUrl(pageUrl);
+        });
+        return true;
+    }
+
+    public static String getFacebookPageCaptureStatus() {
+        return facebookCaptureStatus;
+    }
+
+    public static String getFacebookPageCaptureHtml() {
+        return facebookCaptureHtml;
+    }
+
+    public static void stopFacebookPageCapture(final Activity activity) {
+        Runnable stopTask = () -> {
+            try {
+                if (facebookCaptureWebView != null) {
+                    ViewGroup parent = (ViewGroup) facebookCaptureWebView.getParent();
+                    facebookCaptureWebView.stopLoading();
+                    facebookCaptureWebView.removeJavascriptInterface("SociaSaveCapture");
+                    facebookCaptureWebView.loadUrl("about:blank");
+                    facebookCaptureWebView.destroy();
+                    if (parent != null) parent.removeView(facebookCaptureWebView);
+                }
+            } catch (Exception ignored) {}
+            facebookCaptureWebView = null;
+        };
+        if (activity != null) activity.runOnUiThread(stopTask);
+        else stopTask.run();
+    }
+
+    private static boolean isAllowedFacebookPage(String value) {
+        try {
+            Uri uri = Uri.parse(value);
+            String host = uri.getHost();
+            if (host == null || !"https".equalsIgnoreCase(uri.getScheme())) return false;
+            host = host.toLowerCase();
+            return host.equals("facebook.com") || host.endsWith(".facebook.com")
+                || host.equals("fb.com") || host.endsWith(".fb.com")
+                || host.equals("fb.watch");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static final class FacebookCaptureBridge {
+        @JavascriptInterface
+        public void onCapture(String html) {
+            facebookCaptureHtml = html == null ? "" : html;
+            facebookCaptureStatus = facebookCaptureHtml.isEmpty() ? "error" : "done";
+        }
+
+        @JavascriptInterface
+        public void onError(String message) {
+            facebookCaptureHtml = "";
+            facebookCaptureStatus = "error";
+        }
     }
 
     private static int dp(Activity activity, int value) {
