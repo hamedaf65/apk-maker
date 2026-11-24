@@ -661,11 +661,23 @@ def run(url, root, cookies_file, log, on_progress=None):
                     return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
                 except Exception as ytdlp_error:
                     log("Facebook photo-post yt-dlp failed: " + repr(ytdlp_error))
+                    diagnostic = "not attempted"
+                    try:
+                        from facebook_diagnostics import inspect_public_facebook_page
+                        report = inspect_public_facebook_page(resolved_url, log)
+                        diagnostic = (
+                            str(report.get("video_count", 0)) + " video candidate(s), " +
+                            str(report.get("image_count", 0)) + " image candidate(s)"
+                        )
+                    except Exception as inspect_error:
+                        diagnostic = "capture failed: " + repr(inspect_error)[:240]
+                        log("Facebook public-page diagnostic failed: " + diagnostic)
                     raise DownloadError(
                         "Facebook photo post failed. gallery-dl [" +
-                        type(gallery_error).__name__ + "]: " + repr(gallery_error)[:500] +
+                        type(gallery_error).__name__ + "]: " + repr(gallery_error)[:350] +
                         " | yt-dlp [" + type(ytdlp_error).__name__ + "]: " +
-                        repr(ytdlp_error)[:500]
+                        repr(ytdlp_error)[:350] + " | public-page inspection: " +
+                        diagnostic
                     ) from ytdlp_error
         try:
             return _download_ytdlp(resolved_url, root, platform_name, log, on_progress, cookies_file)
@@ -675,11 +687,23 @@ def run(url, root, cookies_file, log, on_progress=None):
                 return _download_gallery_post(resolved_url, root, platform_name, cookies_file, log, on_progress)
             except Exception as gallery_error:
                 log("Facebook gallery-dl fallback failed: " + repr(gallery_error))
+                diagnostic = "not attempted"
+                try:
+                    from facebook_diagnostics import inspect_public_facebook_page
+                    report = inspect_public_facebook_page(resolved_url, log)
+                    diagnostic = (
+                        str(report.get("video_count", 0)) + " video candidate(s), " +
+                        str(report.get("image_count", 0)) + " image candidate(s)"
+                    )
+                except Exception as inspect_error:
+                    diagnostic = "capture failed: " + repr(inspect_error)[:240]
+                    log("Facebook public-page diagnostic failed: " + diagnostic)
                 raise DownloadError(
                     "Facebook reel/video failed. yt-dlp [" +
-                    type(ytdlp_error).__name__ + "]: " + repr(ytdlp_error)[:500] +
+                    type(ytdlp_error).__name__ + "]: " + repr(ytdlp_error)[:350] +
                     " | gallery-dl [" + type(gallery_error).__name__ + "]: " +
-                    repr(gallery_error)[:500]
+                    repr(gallery_error)[:350] + " | public-page inspection: " +
+                    diagnostic
                 ) from gallery_error
     if platform_name == "tiktok":
         try:
