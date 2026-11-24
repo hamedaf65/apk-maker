@@ -10,7 +10,7 @@ def inspect_public_facebook_page(url, log, capture=None):
     """Capture a public page and report media candidate counts and safe metadata."""
     if capture is None:
         from facebook_webview import capture_facebook_page
-        capture = capture
+        capture = capture_facebook_page
 
     from facebook_extractor import parse_facebook_page
 
