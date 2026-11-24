@@ -17,7 +17,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
-import android.webkit.JavascriptInterface;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,6 +29,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import org.json.JSONTokener;
 
 public final class SociaSaveStorage {
     private static WebView loginWebView;
@@ -234,7 +234,6 @@ public final class SociaSaveStorage {
             CookieManager cookies = CookieManager.getInstance();
             cookies.setAcceptCookie(true);
 
-            view.addJavascriptInterface(new FacebookCaptureBridge(), "SociaSaveCapture");
             view.setWebViewClient(new WebViewClient() {
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView webView, String url) {
@@ -253,22 +252,7 @@ public final class SociaSaveStorage {
                         facebookCaptureStatus = "error";
                         return;
                     }
-                    String script =
-                        "(function(){try{" +
-                        "var started=Date.now(),last=Date.now();" +
-                        "var observer=new MutationObserver(function(){last=Date.now();});" +
-                        "observer.observe(document.documentElement,{childList:true,subtree:true});" +
-                        "var timer=setInterval(function(){" +
-                        "if(Date.now()-started>16000){clearInterval(timer);observer.disconnect();" +
-                        "window.SociaSaveCapture.onError('Facebook page did not stabilize in time');return;}" +
-                        "if(document.readyState==='complete'&&Date.now()-last>1300){" +
-                        "clearInterval(timer);observer.disconnect();" +
-                        "var value=document.documentElement?document.documentElement.outerHTML:'';" +
-                        "if(value.length>1800000)value=value.substring(0,1800000);" +
-                        "window.SociaSaveCapture.onCapture(value);" +
-                        "}},400);" +
-                        "}catch(e){window.SociaSaveCapture.onError(String(e));}})();";
-                    webView.evaluateJavascript(script, null);
+                    webView.postDelayed(() -> captureFacebookPageMarkup(webView, 0, ""), 1200);
                 }
             });
 
@@ -297,7 +281,6 @@ public final class SociaSaveStorage {
                 if (facebookCaptureWebView != null) {
                     ViewGroup parent = (ViewGroup) facebookCaptureWebView.getParent();
                     facebookCaptureWebView.stopLoading();
-                    facebookCaptureWebView.removeJavascriptInterface("SociaSaveCapture");
                     facebookCaptureWebView.loadUrl("about:blank");
                     facebookCaptureWebView.destroy();
                     if (parent != null) parent.removeView(facebookCaptureWebView);
@@ -323,19 +306,40 @@ public final class SociaSaveStorage {
         }
     }
 
-    private static final class FacebookCaptureBridge {
-        @JavascriptInterface
-        public void onCapture(String html) {
-            facebookCaptureHtml = html == null ? "" : html;
-            facebookCaptureStatus = facebookCaptureHtml.isEmpty() ? "error" : "done";
-        }
+    private static void captureFacebookPageMarkup(final WebView view,
+                                                   final int attempt,
+                                                   final String previousHtml) {
+        if (view == null || facebookCaptureWebView != view
+                || !"loading".equals(facebookCaptureStatus)) return;
+        view.evaluateJavascript(
+            "(document.documentElement ? document.documentElement.outerHTML : '')",
+            value -> {
+                String current = "";
+                try {
+                    Object decoded = new JSONTokener(value == null ? "\"\"" : value).nextValue();
+                    if (decoded instanceof String) current = (String) decoded;
+                } catch (Exception ignored) {}
 
-        @JavascriptInterface
-        public void onError(String message) {
-            facebookCaptureHtml = "";
-            facebookCaptureStatus = "error";
-        }
+                if (current.length() > 1800000) {
+                    current = current.substring(0, 1800000);
+                }
+                boolean stable = !current.isEmpty()
+                    && current.length() > 1000
+                    && current.equals(previousHtml);
+                if (stable || attempt >= 14) {
+                    facebookCaptureHtml = current;
+                    facebookCaptureStatus = current.isEmpty() ? "error" : "done";
+                    return;
+                }
+                final String snapshot = current;
+                view.postDelayed(
+                    () -> captureFacebookPageMarkup(view, attempt + 1, snapshot),
+                    900
+                );
+            }
+        );
     }
+
 
     private static int dp(Activity activity, int value) {
         return (int) (value * activity.getResources().getDisplayMetrics().density + 0.5f);
